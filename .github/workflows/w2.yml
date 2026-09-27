@@ -32,7 +32,6 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_BOT_TOKEN: ${{ secrets.TGB1 }}${{ secrets.TGB2 }}${{ secrets.TGB3 }}
         run: python scripts/stats.py
 
       - name: commit
