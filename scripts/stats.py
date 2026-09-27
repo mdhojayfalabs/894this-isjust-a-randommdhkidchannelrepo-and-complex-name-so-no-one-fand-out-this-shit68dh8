@@ -13,28 +13,7 @@ CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "reports", "analytics.csv")
 
 
-def token_health():
-    """One cheap API ping per run to catch a dead/expired push token early."""
-    tok = os.environ.get("PUSH_TOKEN", "")
-    if not tok:
-        return
-    try:
-        import urllib.request
-        req = urllib.request.Request(
-            "https://api.github.com/user",
-            headers={"Authorization": "token " + tok,
-                     "Accept": "application/vnd.github+json"})
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        code = getattr(e, "code", None)
-        if code in (401, 403):
-            from ping import send
-            send(f"ALERT: push token invalid or expired (HTTP {code}). "
-                 "Owner: one fresh token needed - reply here when done.")
-
-
 def main():
-    token_health()
     missing = [k for k in ("YT_REFRESH_TOKEN", "YT_CLIENT_ID", "YT_CLIENT_SECRET")
                if not os.environ.get(k)]
     if missing:

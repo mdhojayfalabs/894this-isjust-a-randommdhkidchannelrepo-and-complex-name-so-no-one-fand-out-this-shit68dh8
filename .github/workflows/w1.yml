@@ -40,7 +40,7 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          NAMES_JSON: ${{ secrets.NAMES_JSON }}
+          NAMES: ${{ secrets.NP1 }}${{ secrets.NP2 }}${{ secrets.NP3 }}
         run: python scripts/run_daily.py
 
       - name: commit

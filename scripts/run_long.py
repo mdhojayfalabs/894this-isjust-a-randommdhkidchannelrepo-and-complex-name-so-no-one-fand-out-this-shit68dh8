@@ -14,12 +14,20 @@ from ping import send
 from uploader import upload_video
 
 def _x(s):
-    """Substitute {A} {B} {CH} {CHT} tokens using the NAMES_JSON secret."""
+    """Substitute {A} {B} {CH} {CHT} tokens. Source: NAMES env (pipe-joined
+    values in fixed order A|B|CH|CHT, assembled in the workflow from NP1-NP3
+    secrets) or NAMES_JSON if present."""
     import json
-    try:
-        n = json.loads(os.environ.get("NAMES_JSON", "{}"))
-    except Exception:
-        n = {}
+    n = {}
+    raw = os.environ.get("NAMES_JSON", "")
+    if raw:
+        try:
+            n = json.loads(raw)
+        except Exception:
+            n = {}
+    if not n:
+        vals = os.environ.get("NAMES", "").split("|")
+        n = {k: v for k, v in zip(["A", "B", "CH", "CHT"], vals) if v}
     if not isinstance(s, str):
         return s
     for k, v in n.items():
