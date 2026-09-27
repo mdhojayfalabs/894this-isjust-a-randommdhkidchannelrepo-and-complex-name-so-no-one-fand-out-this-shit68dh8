@@ -19,17 +19,27 @@ from ping import send
 from uploader import upload_video
 
 def _x(s):
-    """Substitute {A} {B} {CH} {CHT} tokens. Source: NAMES env (pipe-joined
-    values in fixed order A|B|CH|CHT, assembled in the workflow from NP1-NP3
-    secrets) or NAMES_JSON if present."""
-    import json
+    """Substitute {A} {B} {CH} {CHT} tokens.
+
+    Source precedence:
+      1. NAMES_JSON env (explicit JSON object)
+      2. NAMES env, if it parses as JSON
+      3. NAMES env as pipe-joined values A|B|CH|CHT (legacy chunked format)
+
+    The repo secret NAMES is now stored as JSON, so path 2 is the live path.
+    Path 3 is kept only for backwards compatibility with older runs.
+    """
     n = {}
-    raw = os.environ.get("NAMES_JSON", "")
-    if raw:
+    for raw in (os.environ.get("NAMES_JSON", ""), os.environ.get("NAMES", "")):
+        if not raw:
+            continue
         try:
-            n = json.loads(raw)
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                n = parsed
+                break
         except Exception:
-            n = {}
+            pass
     if not n:
         vals = os.environ.get("NAMES", "").split("|")
         n = {k: v for k, v in zip(["A", "B", "CH", "CHT"], vals) if v}

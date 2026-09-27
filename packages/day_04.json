@@ -1,0 +1,25 @@
+{
+  "_comment": "Day 4 - Magic Coin Ice Cream. Target 22-45s (the band that beats both extremes on Shorts retention). Each clip is one ~5s LTX generation. beats[] drives the synthesised SFX.",
+  "bpm": 112,
+  "seed": 7,
+  "clips": [
+    "Close-up: Hoji holds a shiny golden coin up to the camera, eyes wide with excitement, then looks toward a colourful magic ice cream machine. Slight camera push-in.",
+    "He pushes the coin into the slot. The machine lights up and whirls, sparkles swirling inside, Hoji leans in close watching.",
+    "A giant rainbow ice cream pops out of the machine with a burst of sparkles. Hoji's amazed face fills the frame, mouth open in delight.",
+    "He grabs the ice cream and takes a big bite, then hugs it happily and dances on the spot. Bright cheerful ending pose.",
+    "Hoji turns back to the camera, waves both hands and laughs, the rainbow ice cream glowing beside him. Final friendly pose for the loop."
+  ],
+  "beats": [
+    {"t": 0.0,  "cat": "whoosh",  "gain": 0.45},
+    {"t": 0.6,  "cat": "pop",     "gain": 0.55},
+    {"t": 5.0,  "cat": "coin",    "gain": 0.80},
+    {"t": 5.6,  "cat": "sparkle", "gain": 0.60},
+    {"t": 10.0, "cat": "tada",    "gain": 0.90},
+    {"t": 10.5, "cat": "sparkle", "gain": 0.55},
+    {"t": 15.0, "cat": "pop",     "gain": 0.60},
+    {"t": 15.6, "cat": "boing",   "gain": 0.55},
+    {"t": 20.0, "cat": "whoosh",  "gain": 0.50},
+    {"t": 20.8, "cat": "sparkle", "gain": 0.60},
+    {"t": 24.5, "cat": "tada",    "gain": 0.85}
+  ]
+}
