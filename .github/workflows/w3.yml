@@ -1,0 +1,47 @@
+name: w3
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: w3
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: deps
+        run: pip install -r requirements.txt
+
+      - name: run
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          NAMES_JSON: ${{ secrets.NAMES_JSON }}
+          COMPILE_CLIPS: ${{ secrets.COMPILE_CLIPS }}
+        run: python scripts/run_long.py
+
+      - name: commit
+        if: always()
+        run: |
+          git config user.name "svc-w"
+          git config user.email "svc-w@users.noreply.github.com"
+          git add compilations/ state/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "build: w3"
+          git push

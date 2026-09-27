@@ -1,0 +1,41 @@
+name: w4
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: w4
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: deps
+        run: pip install -r requirements.txt
+
+      - name: run
+        env:
+          CLEANUP_KEEP_DAYS: ${{ secrets.CLEANUP_KEEP_DAYS }}
+        run: python scripts/tidy.py
+
+      - name: commit
+        if: always()
+        run: |
+          git config user.name "svc-w"
+          git config user.email "svc-w@users.noreply.github.com"
+          git add videos/ state/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: w4"
+          git push

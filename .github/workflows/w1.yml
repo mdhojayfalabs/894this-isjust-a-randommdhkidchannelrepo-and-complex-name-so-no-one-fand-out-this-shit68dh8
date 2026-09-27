@@ -1,0 +1,53 @@
+name: w1
+
+on:
+  schedule:
+    - cron: "*/20 11-15 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: w1
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: gate
+        name: gate
+        run: python3 scripts/gate.py
+
+      - if: steps.gate.outputs.go == '1'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - if: steps.gate.outputs.go == '1'
+        name: deps
+        run: pip install -r requirements.txt
+
+      - if: steps.gate.outputs.go == '1'
+        name: run
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          NAMES_JSON: ${{ secrets.NAMES_JSON }}
+        run: python scripts/run_daily.py
+
+      - name: commit
+        if: always()
+        run: |
+          git config user.name "svc-w"
+          git config user.email "svc-w@users.noreply.github.com"
+          git add state/ queue/ reports/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "state: w1"
+          git push
