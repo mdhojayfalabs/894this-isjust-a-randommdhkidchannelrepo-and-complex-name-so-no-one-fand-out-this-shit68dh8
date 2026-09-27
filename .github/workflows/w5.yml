@@ -35,6 +35,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           EP_CLIPS: ${{ secrets.EP_CLIPS }}
           NAMES: ${{ secrets.NP1 }}${{ secrets.NP2 }}${{ secrets.NP3 }}
+          TG_BOT_TOKEN: ${{ secrets.TGB1 }}${{ secrets.TGB2 }}${{ secrets.TGB3 }}
           MODE: episode
           EP_CLIPS: "4"
         run: python scripts/run_long.py
