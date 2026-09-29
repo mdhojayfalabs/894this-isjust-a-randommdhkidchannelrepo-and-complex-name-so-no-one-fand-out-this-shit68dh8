@@ -2,6 +2,7 @@
 """Publisher job (probe-driven). state/gate.json decides what to do:
   slot  = next calendar day's clip (videos/day_NN)  -> advance day counter
   spare = oldest queued extra (queue/spare_*.mp4 + sidecar .json) -> delete after
+  skip  = today's attempts are exhausted; advance the day counter unpublished
   none  = do nothing
 Missing media: wait for the next probe, at most one reminder per day.
 """
@@ -129,6 +130,21 @@ def bump_count():
         f.write(f"{today} {read_count() + 1}\n")
 
 
+def skip_day():
+    """Give up on today's day after the gate's attempt cap.
+
+    Without this, a persistently failing day blocks the pipeline forever:
+    next_day.txt never advances, so every subsequent day retries the same
+    broken slot. The clip itself is not lost - packages/day_NN.json still
+    exists and can be regenerated on demand.
+    """
+    day = read_state()
+    write_state(f"{int(day) + 1:02d}")
+    alert(f"SKIP day {day}: attempt cap reached, nothing published today. "
+          f"Advanced to day {int(day) + 1:02d}.")
+    return 0
+
+
 def log_pub(label, vid):
     with open(os.path.join("state", "upload_log.txt"), "a") as f:
         f.write(f"{label} {dt.date.today().isoformat()} {vid}\n")
@@ -139,6 +155,15 @@ def check_placeholders(title, desc, tags):
 
 
 def publish_slot():
+    # The gate is evaluated when a probe STARTS, but the workflow serialises
+    # jobs through its concurrency group. A probe can therefore sit queued
+    # behind a 40-minute generation, decide "slot", and then run after an
+    # earlier job has already published. Re-check here or we double-post, and
+    # a double-post on a brand-new made-for-kids channel is exactly the
+    # spam signal the channel must never send.
+    if read_count() > 0:
+        print("already published today - not posting again", flush=True)
+        return 0
     day = read_state()
     cal = load_calendar(day)
     if cal is None:
@@ -232,6 +257,8 @@ def main():
         pass
     if action == "spare":
         return publish_spare()
+    if action == "skip":
+        return skip_day()
     return publish_slot()
 
 

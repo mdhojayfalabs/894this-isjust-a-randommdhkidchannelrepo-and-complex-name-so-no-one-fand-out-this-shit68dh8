@@ -1,8 +1,11 @@
 name: w1
 
 on:
+  # Probe every 20 minutes, all 24 hours. The gate picks one random second
+  # inside the day, so the probe grid has to cover the whole day, not a
+  # 5-hour slice of it.
   schedule:
-    - cron: "*/20 11-15 * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch: {}
 
 concurrency:
