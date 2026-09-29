@@ -1,26 +1,47 @@
 #!/usr/bin/env python3
 """
-MDH Kids Studio - Short builder.
-
-Turns a content package into a finished 9:16 Short with original audio.
+MDH Kids Studio - Short builder, v2.
 
     python scripts/build_short.py --package day_04 --out videos/day_04.mp4
 
-What it does, in order:
-  1. renders each clip through Pixazo image-to-video (Hoji key frame + anchor)
-  2. crops 1280x704 -> 396x704 (exact 9:16) and upscales to 720x1280
-  3. concatenates the clips
-  4. lays a synthesised music bed plus beat-timed SFX
-  5. makes the last frame match the first so the Short loops cleanly
+WHAT CHANGED AND WHY
+--------------------
+v1 fed the video model a tight studio crop of the character on white. The owner
+rejected the result for three defects, each confirmed by measurement:
 
-WHY THESE NUMBERS
------------------
-Shorts retention thresholds are ~65% under 30s and ~50% for 30-60s, and the
-22-45 second band beats both extremes. The free LTX model emits ~5s clips, so
-a Short is 4-9 clips stitched. Loop rate above 100% is a strong secondary
-signal, hence step 5.
+  * "the character zooms in and out inside the frame" - measured: character
+    height swung 428-640px (36% of mean) and vertical centre 92px across one
+    Short. A/B test proved the cause is not the prompt: `end_image`,
+    `camera_motion`, `negative_prompt` and `seed` are all accepted with HTTP 202
+    and then silently ignored, and character width still shrank 33-47% per clip.
+    The camera is simply not controllable at generation time.
+  * "nothing behind him" - with no scene in the key frame the model invented a
+    different one per clip (white void, then orange).
+  * "so much light behind that you can't make him out" - no lighting described,
+    so it defaulted to a blown-out key behind the subject.
 
-The model ignores aspect_ratio, so vertical has to be manufactured in post.
+v2 fixes all three structurally rather than by prompting:
+
+  1. A scene is BUILT, not requested. scripts/bg_plates.py draws a lit room and
+     scripts/composite.py puts the character in it at a known place. The model
+     now receives a complete frame with structure to hold onto. This also fixes
+     the framing: the character is scaled to ~58% of frame height so there is
+     headroom and a room around him, instead of touching all four edges.
+  2. The prompt describes MOTION ONLY. Re-describing the scene in an
+     image-to-video prompt is a documented cause of drift, so v1's long scene
+     paragraph was actively harmful. Camera direction is stated positively
+     ("tripod-locked stationary shot"), never as "no zoom / no pan" - models
+     read the noun and do the thing.
+  3. The subject is LOCKED IN POST. Because the plate is known, the character's
+     mask in every generated frame is recovered by differencing against the
+     plate - far more reliable than colour thresholding, which matched 99% of
+     the frame on this material. That mask drives a smoothed affine that holds
+     the subject in one framing, and a horizontal crop that follows him.
+  4. The grade pulls the blown-out key back in and restores local contrast.
+
+The generation call itself is unchanged: POST /ltx-video/v1/image-to-video,
+poll /v2/requests/status/{id}. The image is passed as a data: URI, so no
+external hosting and no credential is needed for the key frame.
 """
 import argparse
 import json
@@ -32,19 +53,26 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bg_plates          # noqa: E402
+import composite as comp  # noqa: E402
+import remaster as rm     # noqa: E402
 from gen_audio import mix_voice, music_loop, _write  # noqa: E402
 
-# ---------------------------------------------------------------- config
 GATEWAY = "https://gateway.pixazo.ai"
 SUBMIT = "/ltx-video/v1/image-to-video"
 STATUS = "/v2/requests/status/{rid}"
 
-# The Hoji character anchor. MUST accompany every image-to-video request:
-# text-to-video does not hold the character (verified - it produced a blonde,
-# pale-skinned boy with no glasses from a near-identical prompt).
+# Landscape is what the model emits; vertical is manufactured afterwards.
+GW, GH = 1280, 704
+# 9:16 crop taken out of that landscape frame.
+VW, VH = 396, 704
+
 HOJI_ANCHOR = (
     "Hoji is a toddler boy with DARK BROWN spiky hair, THICK BLACK ROUND "
     "GLASSES, a small BROWN GOATEE, BROWN skin, wearing an ORANGE-RED SOCCER "
@@ -52,8 +80,15 @@ HOJI_ANCHOR = (
     "COLOURFUL BLUE RED YELLOW SNEAKERS. Keep his face, hair colour, glasses "
     "and outfit EXACTLY as in the reference image. "
 )
+# Style carries no negatives: "no text on screen" reads as "text on screen".
 STYLE = ("3D Pixar animation, ultra bright studio lighting, saturated colours, "
-         "smooth 24fps motion, no text on screen, no spoken dialogue. ")
+         "smooth 24fps motion. ")
+# Closing clause, positive phrasing only. "no zoom" makes it zoom.
+CAMERA = ("Tripod-locked stationary shot, motionless camera, subject motion "
+          "only, fixed framing throughout. ")
+
+DEFAULT_KEY = str(ROOT / "assets" / "hoji_key_720.png")
+DEFAULT_SCENE = "playroom"
 
 
 def _ffmpeg():
@@ -61,9 +96,9 @@ def _ffmpeg():
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        for cand in ("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
-            if os.path.exists(cand):
-                return cand
+        for c in ("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+            if os.path.exists(c):
+                return c
         raise SystemExit("ffmpeg not found: pip install imageio-ffmpeg")
 
 
@@ -77,6 +112,24 @@ def sh(args, **kw):
     return r
 
 
+# ---------------------------------------------------------------- key frame
+def landscape_key(key_bgr, scene, seed, char_h_frac=0.58, cx_frac=0.50):
+    """Build the landscape key frame the model is given.
+
+    Returns (image_bgr, plate_bgr, char_box). The character is placed at
+    char_h_frac of the frame's height, aspect preserved, with real headroom -
+    the v1 key frame had him touching all four edges, which is why the model
+    framed him edge-to-edge and had no room to put a scene.
+    """
+    plate = bg_plates.plate(scene, seed, GW, GH)
+    img, matte, box = comp.composite(key_bgr, plate,
+                                     target_h_frac=char_h_frac,
+                                     cx_frac=cx_frac, cy_frac=0.50, shade=0.18)
+    if box is None:
+        raise RuntimeError("character not found in the key frame")
+    return img, plate, box
+
+
 # ---------------------------------------------------------------- pixazo
 class Pixazo:
     def __init__(self, key):
@@ -87,18 +140,24 @@ class Pixazo:
         req = urllib.request.Request(GATEWAY + path, data=d, method="POST", headers={
             "Content-Type": "application/json", "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.key, "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             return json.loads(r.read())
 
-    def submit(self, motion, image_url):
-        j = self._post(SUBMIT, {"prompt": HOJI_ANCHOR + STYLE + motion,
-                                "image": image_url})
+    def submit(self, motion, image_bgr):
+        # data: URI - no hosting, no credential in any URL
+        ok, buf = cv2.imencode(".png", image_bgr)
+        if not ok:
+            raise RuntimeError("could not encode the key frame")
+        uri = "data:image/png;base64," + __import__("base64").b64encode(buf.tobytes()).decode()
+        j = self._post(SUBMIT, {"prompt": HOJI_ANCHOR + STYLE + CAMERA + motion,
+                                "image": uri})
         rid = j.get("request_id")
         if not rid:
             raise RuntimeError(f"submit failed: {j}")
         return rid
 
     def wait(self, rid, timeout=900):
+        st = None
         t0 = time.time()
         while time.time() - t0 < timeout:
             req = urllib.request.Request(GATEWAY + STATUS.format(rid=rid), headers={
@@ -117,148 +176,279 @@ class Pixazo:
         raise TimeoutError(f"{rid} still {st} after {timeout}s")
 
     def fetch(self, url, dest):
-        # The CDN 403s without a browser UA - urlretrieve fails here.
-        sh(["curl", "-sSL", "-A", "Mozilla/5.0", "-o", str(dest), url])
+        subprocess.run(["curl", "-s", "-A", "Mozilla/5.0", "-o", dest, url],
+                       check=True)
+        return dest
 
 
-# ---------------------------------------------------------------- video
-def verticalise(src, dest):
-    """1280x704 landscape -> 396x704 exact 9:16 -> 720x1280.
-    442 centres the crop horizontally on the character."""
-    sh([FF, "-y", "-i", str(src), "-vf",
-        "crop=396:704:442:0,scale=720:1280:flags=lanczos",
-        "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-an", str(dest)])
+# ---------------------------------------------------------------- frames
+def read_frames(path, w=GW, h=GH):
+    tmp = path + ".frames"
+    os.makedirs(tmp, exist_ok=True)
+    for f in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f))
+    sh([FF, "-y", "-i", path, "-vf", f"scale={w}:{h}", os.path.join(tmp, "f_%05d.png")])
+    names = sorted(os.listdir(tmp))
+    return [cv2.imread(os.path.join(tmp, n)) for n in names]
 
 
-def concat(clips, dest):
-    lst = dest.with_suffix(".txt")
-    lst.write_text("".join(f"file '{c.resolve()}'\n" for c in clips))
-    sh([FF, "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
-        "-c", "copy", str(dest)])
+def write_frames(frames, path, fps=25, audio=None):
+    tmp = path + ".frames"
+    os.makedirs(tmp, exist_ok=True)
+    for f in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f))
+    for i, fr in enumerate(frames):
+        cv2.imwrite(os.path.join(tmp, "f_%05d.png" % i), fr)
+    args = [FF, "-y", "-framerate", str(fps), "-i", os.path.join(tmp, "f_%05d.png")]
+    if audio:
+        args += ["-i", audio, "-c:a", "aac", "-b:a", "128k", "-shortest"]
+    args += ["-c:v", "libx264", "-preset", "slow", "-crf", "19",
+             "-pix_fmt", "yuv420p", "-movflags", "+faststart", path]
+    sh(args)
 
 
-def add_audio(video, wav, dest):
-    sh([FF, "-y", "-i", str(video), "-i", str(wav),
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
-        "-shortest", str(dest)])
+# ---------------------------------------------------------------- verticalise
+def verticalise(frames, plate_l, target_frac=0.60, target_cy=0.50,
+                smooth=0.30, max_gain=1.22):
+    """Crop 9:16 around the subject and lock his scale and vertical position.
 
+    Two corrections, both driven by the character's mask recovered by
+    differencing each generated frame against the known plate:
 
-def make_loop(src, dest, xfade=0.6):
-    """Crossfade the tail back into the head so the auto-restart is hidden.
-
-    Shorts loop automatically, and loop rate above 100% is a strong secondary
-    signal. A hard cut from the last frame back to the first is visible; a short
-    crossfade is not.
-
-    Structure of the result, total length unchanged:
-        [ video 0 .. D-xfade ]  +  [ blend(head, tail) over xfade seconds ]
-    where head is the opening xfade seconds and tail is the closing xfade
-    seconds. So the viewer sees the ending dissolve into the beginning.
+      horizontal - the 396px-wide window is centred on him every frame, so a pan
+                   becomes a pan of the world around a still subject
+      vertical   - a smoothed affine holds his height at target_frac and his
+                   centre at target_cy, damped to max_gain so real motion
+                   survives
     """
-    d = probe_duration(src)
-    if d <= xfade * 2.5:
-        sh([FF, "-y", "-i", str(src), "-c", "copy", str(dest)])
-        return
-    fc = (
-        f"[0:v]trim=0:{d - xfade:.3f},setpts=PTS-STARTPTS[m];"
-        f"[0:v]trim=0:{xfade:.3f},setpts=PTS-STARTPTS[h];"
-        f"[0:v]trim=start={d - xfade:.3f},setpts=PTS-STARTPTS[t];"
-        f"[h][t]blend=all_expr='A*(1-(T/{xfade:.3f}))+B*(T/{xfade:.3f})'[x];"
-        f"[m][x]concat=n=2:v=1:a=0[v]"
-    )
-    sh([FF, "-y", "-i", str(src), "-filter_complex", fc,
-        "-map", "[v]", "-c:v", "libx264", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-an", str(dest)])
+    boxes = []
+    for f in frames:
+        m = comp.diff_matte(f, plate_l, thresh=22, feather=3)
+        ys, xs = np.nonzero(m > 100)
+        if not len(xs):
+            boxes.append(None)
+            continue
+        boxes.append((int(xs.min()), int(ys.min()),
+                      int(xs.max()) - int(xs.min()), int(ys.max()) - int(ys.min())))
+
+    ok = [b for b in boxes if b]
+    if not ok:
+        out = []
+        for f in frames:
+            x0 = (GW - VW) // 2
+            out.append(cv2.resize(f[:, x0:x0 + VW], (VW * 2, VH * 2),
+                                  interpolation=cv2.INTER_LANCZOS4))
+        return out, boxes
+
+    # horizontal centre, smoothed
+    cx = np.array([b[0] + b[2] / 2.0 if b else np.nan for b in boxes])
+    cx = pd_fill(cx)
+    cx = pd_smooth(cx, smooth)
+
+    mats = rm.lock_transforms(boxes, target_frac=target_frac,
+                              target_cy=target_cy, smooth=smooth,
+                              W=GW, H=GH, max_gain=max_gain)
+
+    out = []
+    for f, m, c in zip(frames, mats, cx):
+        w = cv2.warpAffine(f, m, (GW, GH), flags=cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_REPLICATE)
+        x0 = int(np.clip(round(c - VW / 2.0), 0, GW - VW))
+        crop = w[:, x0:x0 + VW]
+        out.append(cv2.resize(crop, (VW * 2, VH * 2),
+                              interpolation=cv2.INTER_LANCZOS4))
+    return out, boxes
 
 
-def probe_duration(path):
-    r = sh([FF, "-i", str(path), "-f", "null", "-"])
-    for line in r.stderr.splitlines():
-        if "Duration:" in line:
-            hms = line.split("Duration:")[1].split(",")[0].strip()
-            h, m, s = hms.split(":")
-            return int(h) * 3600 + int(m) * 60 + float(s)
-    return 0.0
+def pd_fill(a):
+    a = a.copy()
+    idx = np.arange(len(a))
+    good = ~np.isnan(a)
+    if good.sum() == 0:
+        return np.zeros_like(a)
+    a[~good] = np.interp(idx[~good], idx[good], a[good])
+    return a
 
 
-# ---------------------------------------------------------------- main
-def build(package, out, image_url, key, workdir):
-    workdir.mkdir(parents=True, exist_ok=True)
-    px = Pixazo(key)
+def pd_smooth(a, s):
+    if len(a) < 3 or s <= 0:
+        return a
+    f = a.copy()
+    for i in range(1, len(f)):
+        f[i] = s * f[i - 1] + (1 - s) * f[i]
+    b = a.copy()
+    for i in range(len(b) - 2, -1, -1):
+        b[i] = s * b[i + 1] + (1 - s) * b[i]
+    return 0.5 * (f + b)
 
-    clips = []
-    for i, motion in enumerate(package["clips"]):
-        raw = workdir / f"clip_{i}_raw.mp4"
-        vert = workdir / f"clip_{i}_v.mp4"
-        if not vert.exists():
-            print(f"  clip {i}: submitting...")
-            rid = px.submit(motion, image_url)
-            print(f"  clip {i}: queued {rid[-12:]}")
+
+# ---------------------------------------------------------------- clip
+def build_clip(px, motion, scene, seed, key_bgr, workdir, idx,
+               char_h_frac=0.58, retry=2):
+    """One clip: key frame -> generate -> verticalise -> grade. Returns frames."""
+    img, plate, box = landscape_key(key_bgr, scene, seed,
+                                    char_h_frac=char_h_frac)
+    kf = os.path.join(workdir, f"clip_{idx}_key.png")
+    cv2.imwrite(kf, img)
+    pl = os.path.join(workdir, f"clip_{idx}_plate.png")
+    cv2.imwrite(pl, plate)
+
+    last = None
+    for attempt in range(retry + 1):
+        try:
+            rid = px.submit(motion, img)
+            print(f"  clip {idx}: submitted {rid} (attempt {attempt + 1})", flush=True)
             url = px.wait(rid)
-            print(f"  clip {i}: generated, downloading")
+            raw = os.path.join(workdir, f"clip_{idx}_raw.mp4")
             px.fetch(url, raw)
-            print(f"  clip {i}: verticalising")
-            verticalise(raw, vert)
-        clips.append(vert)
-        print(f"  clip {i}: done ({vert.stat().st_size/1e6:.2f} MB)")
+            break
+        except Exception as e:
+            last = e
+            print(f"  clip {idx}: attempt {attempt + 1} failed: {e}", flush=True)
+            time.sleep(15)
+    else:
+        raise RuntimeError(f"clip {idx} failed after {retry + 1} attempts: {last}")
 
-    joined = workdir / "joined.mp4"
-    concat(clips, joined)
+    frames = read_frames(raw, GW, GH)
+    print(f"  clip {idx}: {len(frames)} frames generated", flush=True)
+    vert, boxes = verticalise(frames, plate)
+    graded = [rm.grade(f) for f in vert]
+    return graded, plate
 
-    # Loop seam: crossfade the tail into the head so the auto-restart is hidden.
-    looped = workdir / "looped.mp4"
-    make_loop(joined, looped, xfade=package.get("loop_xfade", 0.6))
-    print(f"  looped: {probe_duration(looped):.2f}s")
 
-    # Duration comes from the rendered clips themselves, not from the package.
-    # The free LTX model emits ~5s per clip, but it is not exact, so probe it.
-    total = 0.0
-    for c in clips:
-        r = sh([FF, "-i", str(c), "-f", "null", "-"])
-        for line in r.stderr.splitlines():
-            if "Duration:" in line:
-                try:
-                    hms = line.split("Duration:")[1].split(",")[0].strip()
-                    h, m, s = hms.split(":")
-                    total += int(h) * 3600 + int(m) * 60 + float(s)
-                except Exception:
-                    total += 5.0
-                break
-        else:
-            total += 5.0
-    if total <= 0:
-        total = 5.0 * len(clips)
-    print(f"  measured duration: {total:.2f}s from {len(clips)} clips")
-    bed = music_loop(seconds=total, bpm=package.get("bpm", 112),
-                     seed=package.get("seed", 7))
-    events = [(b["t"], b["cat"], b.get("name", "a"), b.get("gain", 0.7))
-              for b in package.get("beats", [])]
-    wav = workdir / "audio.wav"
-    _write(wav, mix_voice(bed, events, total))
-    print(f"  audio: {total:.1f}s bed + {len(events)} sfx")
+# ---------------------------------------------------------------- package
+def load_package(name):
+    p = ROOT / "packages" / f"{name}.json"
+    if not p.exists():
+        p = ROOT / "packages" / f"{name}.yaml"
+    if not p.exists():
+        raise SystemExit(f"no package {name}")
+    return json.loads(p.read_text())
 
-    add_audio(looped, wav, out)
-    print(f"  wrote {out} ({out.stat().st_size/1e6:.2f} MB)")
+
+def motion_prompt(clip, i):
+    """Motion only. Never re-describe the scene - that is what causes drift."""
+    if isinstance(clip, dict):
+        return clip.get("motion") or clip.get("prompt") or clip.get("shot", "")
+    return clip
+
+
+def clip_scene(clip, default):
+    """The room this clip plays in, from the package."""
+    if isinstance(clip, dict):
+        return clip.get("scene") or default
+    return default
+
+
+def build(pkg, dest, image_url=None, key=None, workdir=None,
+          char_h_frac=0.80, key_frame=None):
+    """Library entry point used by generate_day.py.
+
+    `image_url` is accepted and ignored: the key frame is now built locally and
+    passed to the gateway as a data: URI, so no hosting and no credential in a
+    URL is involved. It stays in the signature because generate_day.py passes it.
+    """
+    if not key:
+        raise SystemExit("PIXAZO_API_KEY is not set")
+    px = Pixazo(key)
+    kf = key_frame or os.environ.get("HOJI_SCENE_KEY") or str(ROOT / "assets" / "hoji_scene_key.png")
+    key_bgr = cv2.imread(kf)
+    if key_bgr is None:
+        raise SystemExit(f"cannot read key frame {kf}")
+
+    workdir = str(workdir or (ROOT / "build" / f"day_{pkg.get('day', 0):02d}"))
+    os.makedirs(workdir, exist_ok=True)
+    seed0 = int(pkg.get("seed", 7))
+
+    all_frames = []
+    for i, clip in enumerate(pkg["clips"]):
+        cache = os.path.join(workdir, f"clip_{i}_final.mp4")
+        if os.path.exists(cache):
+            all_frames += read_frames(cache, VW * 2, VH * 2)
+            print(f"  clip {i}: reused cache", flush=True)
+            continue
+        scene = clip_scene(clip, DEFAULT_SCENE)
+        frames, _ = build_clip(px, motion_prompt(clip, i), scene, seed0 + i,
+                               key_bgr, workdir, i, char_h_frac=char_h_frac)
+        write_frames(frames, cache, fps=25)
+        all_frames += frames
+        print(f"  clip {i}: {len(frames)} frames -> {cache}", flush=True)
+
+    print(f"total frames: {len(all_frames)}", flush=True)
+    beats = pkg.get("beats", [])
+    bpm = int(pkg.get("bpm", 112))
+    dur = len(all_frames) / 25.0
+    music = music_loop(dur, bpm=bpm, seed=seed0)
+    voice = mix_voice(beats, dur, bpm=bpm)
+    if voice is not None:
+        n = min(len(music), len(voice))
+        music = music[:n] + voice[:n]
+    awav = os.path.join(workdir, "audio.wav")
+    _write(awav, music)
+
+    dest = str(dest)
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    write_frames(all_frames, dest, fps=25, audio=awav)
+    print(f"wrote {dest}", flush=True)
+    return dest
 
 
 def main():
-    global FF
-    FF = _ffmpeg()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--package", required=True, help="JSON file describing the Short")
+    ap.add_argument("--package", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--image-url", required=True,
-                    help="publicly reachable 9:16 character key frame")
-    ap.add_argument("--key", default=os.environ.get("PIXAZO_API_KEY"))
-    ap.add_argument("--workdir", default="build")
+    ap.add_argument("--key", default=os.environ.get("HOJI_KEY", DEFAULT_KEY))
+    ap.add_argument("--workdir", default=str(ROOT / "build"))
+    ap.add_argument("--scene", default=None)
+    ap.add_argument("--char-h", type=float, default=0.80)
+    ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
-    if not a.key:
-        raise SystemExit("PIXAZO_API_KEY not set")
 
-    pkg = json.loads(Path(a.package).read_text())
-    build(pkg, Path(a.out), a.image_url, a.key, Path(a.workdir))
+    key = os.environ.get("PIXAZO_API_KEY")
+    if not key:
+        raise SystemExit("PIXAZO_API_KEY is not set")
+    px = Pixazo(key)
+    key_bgr = cv2.imread(a.key)
+    if key_bgr is None:
+        raise SystemExit(f"cannot read key frame {a.key}")
+
+    pkg = load_package(a.package)
+    workdir = os.path.join(a.workdir, a.package)
+    os.makedirs(workdir, exist_ok=True)
+    out_mp4 = os.path.join(workdir, "short.mp4")
+
+    seed0 = int(pkg.get("seed", 7))
+
+    all_frames = []
+    for i, clip in enumerate(pkg["clips"]):
+        cache = os.path.join(workdir, f"clip_{i}_final.mp4")
+        if os.path.exists(cache) and not a.force:
+            all_frames += read_frames(cache, VW * 2, VH * 2)
+            print(f"  clip {i}: reused cache", flush=True)
+            continue
+        scene = a.scene or clip_scene(clip, DEFAULT_SCENE)
+        frames, _ = build_clip(px, motion_prompt(clip, i), scene, seed0 + i,
+                               key_bgr, workdir, i, char_h_frac=a.char_h)
+        write_frames(frames, cache, fps=25)
+        all_frames += frames
+        print(f"  clip {i}: {len(frames)} frames -> {cache}", flush=True)
+
+    print(f"total frames: {len(all_frames)}", flush=True)
+
+    # audio
+    beats = pkg.get("beats", [])
+    bpm = int(pkg.get("bpm", 112))
+    dur = len(all_frames) / 25.0
+    music = music_loop(dur, bpm=bpm, seed=seed0)
+    voice = mix_voice(beats, dur, bpm=bpm)
+    if voice is not None:
+        music = music[:len(voice)] + voice[:len(music)]
+    awav = os.path.join(workdir, "audio.wav")
+    _write(awav, music)
+
+    os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+    write_frames(all_frames, a.out, fps=25, audio=awav)
+    print(f"wrote {a.out}", flush=True)
 
 
 if __name__ == "__main__":

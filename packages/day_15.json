@@ -5,11 +5,26 @@
   "seed": 22,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam picks up a small watering can that sparkles in the sunlight She waters one tiny flower; it shoots up into a giant smiling sunflower",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji runs over and waters another; a giant tulip bursts out",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. The whole garden bursts into giant giggling flowers taller than the kids",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Butterflies and bees dance around; both kids spin with arms wide",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam lifts the watering can to camera and one drop falls, looping to the start"
+    {
+      "motion": "Mariyam picks up a small watering can that sparkles in the sunlight She waters one tiny flower; it shoots up into a giant smiling sunflower",
+      "scene": "garden"
+    },
+    {
+      "motion": "Hoji runs over and waters another; a giant tulip bursts out",
+      "scene": "garden"
+    },
+    {
+      "motion": "The whole garden bursts into giant giggling flowers taller than the kids",
+      "scene": "garden"
+    },
+    {
+      "motion": "Butterflies and bees dance around; both kids spin with arms wide",
+      "scene": "garden"
+    },
+    {
+      "motion": "Mariyam lifts the watering can to camera and one drop falls, looping to the start",
+      "scene": "garden"
+    }
   ],
   "beats": [
     {

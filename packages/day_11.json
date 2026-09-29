@@ -5,11 +5,26 @@
   "seed": 18,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The kettle marches across the kitchen floor, cups following behind it like a parade Hoji bangs a spoon on a pan keeping the beat, Mariyam marches and claps",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The parade marches through a door of rainbow steam into the playroom",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Balloons, bubbles and confetti explode out of the kettle lid",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Both kids spin in the colourful storm, hugging each other and laughing",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The kettle shrinks back to tiny, hops onto the shelf, and winks at camera to close the arc"
+    {
+      "motion": "The kettle marches across the kitchen floor, cups following behind it like a parade Hoji bangs a spoon on a pan keeping the beat, Mariyam marches and claps",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The parade marches through a door of rainbow steam into the playroom",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Balloons, bubbles and confetti explode out of the kettle lid",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Both kids spin in the colourful storm, hugging each other and laughing",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The kettle shrinks back to tiny, hops onto the shelf, and winks at camera to close the arc",
+      "scene": "kitchen"
+    }
   ],
   "beats": [
     {

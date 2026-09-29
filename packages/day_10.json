@@ -5,11 +5,26 @@
   "seed": 17,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The smiling kettle now fills half the kitchen, gently bubbling Hoji climbs a stool and pats its side; it giggles and puffs rainbow steam",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam opens a cupboard and colourful cups fly out dancing in the air",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The cups line up and the kettle pours sparkling rainbow tea into each one",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Both kids sip and their cheeks glow with happy colours, laughing",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The kettle puffs one enormous rainbow cloud toward camera, looping to the next part"
+    {
+      "motion": "The smiling kettle now fills half the kitchen, gently bubbling Hoji climbs a stool and pats its side; it giggles and puffs rainbow steam",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Mariyam opens a cupboard and colourful cups fly out dancing in the air",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The cups line up and the kettle pours sparkling rainbow tea into each one",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Both kids sip and their cheeks glow with happy colours, laughing",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The kettle puffs one enormous rainbow cloud toward camera, looping to the next part",
+      "scene": "kitchen"
+    }
   ],
   "beats": [
     {

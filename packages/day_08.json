@@ -5,11 +5,26 @@
   "seed": 15,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam plants a tiny glowing seed in a pot in the sunny garden A sparkling tree shoots up instantly, growing faster than she can step back",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Giant colourful fruits pop out one by one with a springy boing sound",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji catches a giant apple, Mariyam catches a giant banana, both hugging them",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. The tree rains down tiny smiling fruits that bounce on the grass",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam holds up a new tiny glowing seed to camera, looping to the start"
+    {
+      "motion": "Mariyam plants a tiny glowing seed in a pot in the sunny garden A sparkling tree shoots up instantly, growing faster than she can step back",
+      "scene": "garden"
+    },
+    {
+      "motion": "Giant colourful fruits pop out one by one with a springy boing sound",
+      "scene": "garden"
+    },
+    {
+      "motion": "Hoji catches a giant apple, Mariyam catches a giant banana, both hugging them",
+      "scene": "garden"
+    },
+    {
+      "motion": "The tree rains down tiny smiling fruits that bounce on the grass",
+      "scene": "garden"
+    },
+    {
+      "motion": "Mariyam holds up a new tiny glowing seed to camera, looping to the start",
+      "scene": "garden"
+    }
   ],
   "beats": [
     {

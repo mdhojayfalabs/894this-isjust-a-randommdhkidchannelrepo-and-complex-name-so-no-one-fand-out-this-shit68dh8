@@ -5,11 +5,26 @@
   "seed": 23,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji pumps a balloon; it twists itself into a glowing pink dog The balloon dog barks a squeaky bark and runs circles around Hoji",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam pumps another; it becomes a giant yellow giraffe",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. A whole parade of balloon animals marches across the grass",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Both kids ride on the giant balloon giraffe, waving and laughing",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji ties off a new balloon and holds it to camera, looping to the start"
+    {
+      "motion": "Hoji pumps a balloon; it twists itself into a glowing pink dog The balloon dog barks a squeaky bark and runs circles around Hoji",
+      "scene": "garden"
+    },
+    {
+      "motion": "Mariyam pumps another; it becomes a giant yellow giraffe",
+      "scene": "garden"
+    },
+    {
+      "motion": "A whole parade of balloon animals marches across the grass",
+      "scene": "garden"
+    },
+    {
+      "motion": "Both kids ride on the giant balloon giraffe, waving and laughing",
+      "scene": "garden"
+    },
+    {
+      "motion": "Hoji ties off a new balloon and holds it to camera, looping to the start",
+      "scene": "garden"
+    }
   ],
   "beats": [
     {

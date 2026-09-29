@@ -5,11 +5,26 @@
   "seed": 21,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. The playroom door bursts open and a marching band of toy animals parades in Hoji leads the parade banging a drum; Mariyam twirls a sparkly ribbon behind him",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. A giant bubble machine rolls in, filling the room with rainbow bubbles",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. A train of colourful blocks drives through, stacking itself into a tower",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. The tower turns into a slide; both kids slide down laughing into a ball pit",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Confetti cannons pop one after another in every corner of the room"
+    {
+      "motion": "The playroom door bursts open and a marching band of toy animals parades in Hoji leads the parade banging a drum; Mariyam twirls a sparkly ribbon behind him",
+      "scene": "playroom"
+    },
+    {
+      "motion": "A giant bubble machine rolls in, filling the room with rainbow bubbles",
+      "scene": "playroom"
+    },
+    {
+      "motion": "A train of colourful blocks drives through, stacking itself into a tower",
+      "scene": "playroom"
+    },
+    {
+      "motion": "The tower turns into a slide; both kids slide down laughing into a ball pit",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Confetti cannons pop one after another in every corner of the room",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {

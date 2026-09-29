@@ -5,11 +5,26 @@
   "seed": 14,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji sits behind a tiny colourful drum kit and hits the big red drum Every beat makes a glowing star burst out of the drum and bounce on the floor",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam dances in, clapping on every beat, giggling",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. The drums start playing themselves faster, confetti popping out with every hit",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both kids drum on everything in sight while stars and confetti fill the room",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji hits one final cymbal, winks at camera, and raises his stick to loop"
+    {
+      "motion": "Hoji sits behind a tiny colourful drum kit and hits the big red drum Every beat makes a glowing star burst out of the drum and bounce on the floor",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Mariyam dances in, clapping on every beat, giggling",
+      "scene": "playroom"
+    },
+    {
+      "motion": "The drums start playing themselves faster, confetti popping out with every hit",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Both kids drum on everything in sight while stars and confetti fill the room",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Hoji hits one final cymbal, winks at camera, and raises his stick to loop",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {

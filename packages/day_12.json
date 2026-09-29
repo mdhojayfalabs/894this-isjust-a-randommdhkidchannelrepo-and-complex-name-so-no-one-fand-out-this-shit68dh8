@@ -5,11 +5,26 @@
   "seed": 19,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji places a tiny toy train on a track that starts glowing blue The track stretches across the whole playroom and the train grows to real size",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam squeals and climbs into the bright red carriage",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. The train drives past toy shelves, through a tunnel of blocks, lights flashing",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. It toots a happy whistle and blows bubble smoke rings into the air",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji holds up the tiny toy train again to camera, looping to the start"
+    {
+      "motion": "Hoji places a tiny toy train on a track that starts glowing blue The track stretches across the whole playroom and the train grows to real size",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Mariyam squeals and climbs into the bright red carriage",
+      "scene": "playroom"
+    },
+    {
+      "motion": "The train drives past toy shelves, through a tunnel of blocks, lights flashing",
+      "scene": "playroom"
+    },
+    {
+      "motion": "It toots a happy whistle and blows bubble smoke rings into the air",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Hoji holds up the tiny toy train again to camera, looping to the start",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {

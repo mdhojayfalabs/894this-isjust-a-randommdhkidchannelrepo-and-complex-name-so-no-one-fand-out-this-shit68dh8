@@ -5,11 +5,26 @@
   "seed": 13,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji sits on the floor holding a giant colouring book; Mariyam leans in curiously Mariyam taps a black-and-white drawing with a glowing crayon",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Rainbow colour spreads across the page like liquid light",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. A glowing 3D butterfly flies out of the page into the real playroom",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam jumps trying to catch it while Hoji laughs and turns to a new page",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both wave at camera as sparkling stars shower down and Hoji opens the book again to loop"
+    {
+      "motion": "Hoji sits on the floor holding a giant colouring book; Mariyam leans in curiously Mariyam taps a black-and-white drawing with a glowing crayon",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Rainbow colour spreads across the page like liquid light",
+      "scene": "playroom"
+    },
+    {
+      "motion": "A glowing 3D butterfly flies out of the page into the real playroom",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Mariyam jumps trying to catch it while Hoji laughs and turns to a new page",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Both wave at camera as sparkling stars shower down and Hoji opens the book again to loop",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {

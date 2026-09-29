@@ -5,11 +5,26 @@
   "seed": 16,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Hoji finds a small dusty teapot on a high kitchen shelf and pulls it down He sets it on the table; it wobbles and lets out one tiny sparkly puff of steam",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam peeks in from the side, eyes wide, whispering wow",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The teapot hops once, twice, and grows a little bigger with each hop",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. It sprouts little handles and a smiling face; both kids back away amazed",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. The kettle lets out a huge happy steam whistle and Hoji points at it to loop"
+    {
+      "motion": "Hoji finds a small dusty teapot on a high kitchen shelf and pulls it down He sets it on the table; it wobbles and lets out one tiny sparkly puff of steam",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Mariyam peeks in from the side, eyes wide, whispering wow",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The teapot hops once, twice, and grows a little bigger with each hop",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "It sprouts little handles and a smiling face; both kids back away amazed",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "The kettle lets out a huge happy steam whistle and Hoji points at it to loop",
+      "scene": "kitchen"
+    }
   ],
   "beats": [
     {

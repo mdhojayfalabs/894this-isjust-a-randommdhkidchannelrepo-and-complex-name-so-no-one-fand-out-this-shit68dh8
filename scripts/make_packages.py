@@ -68,8 +68,32 @@ def parse_shots(body):
     return setting, shots
 
 
+# The room each day's clips play in. The drawn plate comes from here; the prompt
+# never mentions the setting, because re-describing the scene in an
+# image-to-video prompt is a documented cause of the model drifting away from
+# the source frame. v1 prefixed every prompt with "Setting: ..." and the
+# character morphed and the camera wandered as a result.
+SCENE_WORDS = {
+    "playroom": ["playroom", "toy", "blocks", "indoor", "room"],
+    "kitchen": ["kitchen", "counter", "fruit", "bowl", "snack", "table"],
+    "garden": ["garden", "outdoor", "grass", "yard", "park", "flowers", "sky"],
+}
+
+
+def pick_scene(setting):
+    low = (setting or "").lower()
+    for scene, words in SCENE_WORDS.items():
+        if any(w in low for w in words):
+            return scene
+    return "playroom"
+
+
 def build_clips(setting, shots):
-    """6 shots -> 5 clips. First clip takes two shots (hook density)."""
+    """6 shots -> 5 clips. First clip takes two shots (hook density).
+
+    Each clip is (motion, scene). The motion is ACTION ONLY - no setting, no
+    re-description of what is already visible in the key frame.
+    """
     if len(shots) < 5:
         return None
     groups = [
@@ -79,12 +103,10 @@ def build_clips(setting, shots):
         [shots[4]],
         [shots[5]] if len(shots) > 5 else [shots[-1]],
     ]
+    scene = pick_scene(setting)
     clips = []
     for g in groups:
-        motion = " ".join(g)
-        if setting:
-            motion = f"Setting: {setting}. {motion}"
-        clips.append(motion)
+        clips.append({"motion": " ".join(g), "scene": scene})
     return clips
 
 

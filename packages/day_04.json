@@ -5,11 +5,26 @@
   "seed": 11,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji pushes a glowing golden coin into a colourful magic ice cream machine on a low table The machine whirls with sparkles and a giant rainbow ice cream pops out with a dancing teddy bear on top",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji's face fills the frame, eyes huge, mouth open, pointing at the coin slot in delight",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam runs in, laughs and takes the giant ice cream, jumping up and down",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. She licks it, giggles, and a tiny ice cream puppy appears beside her wagging its tail",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both kids face camera waving, then Hoji points back at the coin slot so the shot loops"
+    {
+      "motion": "Hoji pushes a glowing golden coin into a colourful magic ice cream machine on a low table The machine whirls with sparkles and a giant rainbow ice cream pops out with a dancing teddy bear on top",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Hoji's face fills the frame, eyes huge, mouth open, pointing at the coin slot in delight",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Mariyam runs in, laughs and takes the giant ice cream, jumping up and down",
+      "scene": "playroom"
+    },
+    {
+      "motion": "She licks it, giggles, and a tiny ice cream puppy appears beside her wagging its tail",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Both kids face camera waving, then Hoji points back at the coin slot so the shot loops",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {

@@ -5,11 +5,26 @@
   "seed": 20,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam mixes batter in a huge bowl; it starts glowing pink She pours it into a giant cupcake case; it rises into an enormous cupcake",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Hoji's amazed face appears over the counter edge, eyes huge",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. A cherry the size of a ball bounces onto the top with a boing",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Sprinkles rain down like confetti; both kids hold out their hands catching them",
-    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam lifts a tiny cupcake to camera and blows a sparkle, looping to the start"
+    {
+      "motion": "Mariyam mixes batter in a huge bowl; it starts glowing pink She pours it into a giant cupcake case; it rises into an enormous cupcake",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Hoji's amazed face appears over the counter edge, eyes huge",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "A cherry the size of a ball bounces onto the top with a boing",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Sprinkles rain down like confetti; both kids hold out their hands catching them",
+      "scene": "kitchen"
+    },
+    {
+      "motion": "Mariyam lifts a tiny cupcake to camera and blows a sparkle, looping to the start",
+      "scene": "kitchen"
+    }
   ],
   "beats": [
     {

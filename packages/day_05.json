@@ -5,11 +5,26 @@
   "seed": 12,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam blows a giant rainbow bubble from a magic wand in the sunny garden The bubble grows huge, lifts Mariyam slightly off the grass, she squeals with joy",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji runs into frame pointing up at the enormous wobbling bubble",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. The bubble pops with a musical sparkle burst and releases a shower of tiny toy rockets",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. The rockets zoom in circles around both kids who clap and spin around laughing",
-    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam blows a new small bubble toward camera, which grows, looping back to the start"
+    {
+      "motion": "Mariyam blows a giant rainbow bubble from a magic wand in the sunny garden The bubble grows huge, lifts Mariyam slightly off the grass, she squeals with joy",
+      "scene": "garden"
+    },
+    {
+      "motion": "Hoji runs into frame pointing up at the enormous wobbling bubble",
+      "scene": "garden"
+    },
+    {
+      "motion": "The bubble pops with a musical sparkle burst and releases a shower of tiny toy rockets",
+      "scene": "garden"
+    },
+    {
+      "motion": "The rockets zoom in circles around both kids who clap and spin around laughing",
+      "scene": "garden"
+    },
+    {
+      "motion": "Mariyam blows a new small bubble toward camera, which grows, looping back to the start",
+      "scene": "garden"
+    }
   ],
   "beats": [
     {

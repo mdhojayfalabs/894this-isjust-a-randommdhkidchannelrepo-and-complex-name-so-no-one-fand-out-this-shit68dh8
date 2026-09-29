@@ -5,11 +5,26 @@
   "seed": 24,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji and Mariyam crawl into a small play tent that starts glowing softly Inside, the tent walls turn into a swirling galaxy of neon stars and planets",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. A tiny friendly moon floats down and high-fives Mariyam",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Glowing stars bounce off the walls like balloons; both kids hop to catch them",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. The tent opens and a river of neon light pours out into the playroom",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both peek out of the tent flap and wave at camera, then duck back in to loop"
+    {
+      "motion": "Hoji and Mariyam crawl into a small play tent that starts glowing softly Inside, the tent walls turn into a swirling galaxy of neon stars and planets",
+      "scene": "playroom"
+    },
+    {
+      "motion": "A tiny friendly moon floats down and high-fives Mariyam",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Glowing stars bounce off the walls like balloons; both kids hop to catch them",
+      "scene": "playroom"
+    },
+    {
+      "motion": "The tent opens and a river of neon light pours out into the playroom",
+      "scene": "playroom"
+    },
+    {
+      "motion": "Both peek out of the tent flap and wave at camera, then duck back in to loop",
+      "scene": "playroom"
+    }
   ],
   "beats": [
     {
