@@ -15,7 +15,11 @@ permissions:
 jobs:
   job:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Generation dominates the runtime: 5 clips at ~100s each when the Pixazo
+    # queue is clear, but it has been observed at ~460s per clip under load,
+    # which is ~38 minutes before any upload happens. The previous 40-minute
+    # cap killed the job mid-generation, which is one reason nothing published.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +36,26 @@ jobs:
         name: deps
         run: pip install -r requirements.txt
 
+      # Fail loudly and early if a secret the pipeline needs is absent, rather
+      # than discovering it 40 minutes into a generation run.
+      - if: steps.gate.outputs.go == '1'
+        name: check-secrets
+        env:
+          PIXAZO_API_KEY: ${{ secrets.PIXAZO_API_KEY }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: |
+          missing=""
+          for v in PIXAZO_API_KEY YT_REFRESH_TOKEN YT_CLIENT_ID YT_CLIENT_SECRET; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repo secrets:$missing"
+            exit 1
+          fi
+          echo "all required secrets present"
+
       - if: steps.gate.outputs.go == '1'
         name: run
         env:
@@ -41,6 +65,8 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           NAMES: ${{ secrets.NAMES }}
+          PIXAZO_API_KEY: ${{ secrets.PIXAZO_API_KEY }}
+          HOJI_KEY_URL: ${{ secrets.HOJI_KEY_URL }}
         run: python scripts/run_daily.py
 
       - name: commit

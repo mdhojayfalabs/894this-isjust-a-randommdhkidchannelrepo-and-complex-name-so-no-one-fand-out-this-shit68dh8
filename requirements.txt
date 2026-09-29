@@ -3,3 +3,7 @@ google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.2.0
 requests>=2.31.0
 PyYAML>=6.0
+# generation stack: procedural audio + ffmpeg for the 9:16 crop, concat and loop
+numpy>=1.24.0
+imageio-ffmpeg>=0.4.9
+pillow>=10.0.0

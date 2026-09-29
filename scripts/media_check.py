@@ -1,28 +1,52 @@
 #!/usr/bin/env python3
 """Validate a clip before it gets uploaded. Exit 0 = OK, 1 = rejected.
-Uses ffprobe (preinstalled on GitHub runners). If ffprobe is missing
-(local machine), falls back to warn-and-pass on file size only.
+
+Uses ffmpeg rather than ffprobe, because the only ffmpeg available in this
+pipeline comes from imageio-ffmpeg, which ships `ffmpeg` and not `ffprobe`.
+The old version silently degraded to "warn-only pass" whenever ffprobe was
+absent, which meant a broken clip could be uploaded unchecked.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 
 
-def probe(path):
-    if not shutil.which("ffprobe"):
-        return None
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json",
-         "-show_format", "-show_streams", path],
-        capture_output=True, text=True)
-    if out.returncode != 0:
-        return None
+def _ffmpeg():
+    """Locate an ffmpeg binary: PATH first, then imageio-ffmpeg."""
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
     try:
-        return json.loads(out.stdout)
-    except json.JSONDecodeError:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
         return None
+
+
+def probe(path):
+    """Return (duration, width, height, has_audio) or None if unprobeable."""
+    ff = _ffmpeg()
+    if not ff:
+        return None
+    out = subprocess.run([ff, "-i", path, "-f", "null", "-"],
+                         capture_output=True, text=True)
+    err = out.stderr or ""
+    dur = w = h = 0.0
+    has_audio = False
+    m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", err)
+    if m:
+        dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    for m in re.finditer(r"Stream #\d+:\d+.*?:\s*(\w+).*?,?\s*(\d+)x(\d+)", err):
+        if m.group(1).lower() in ("video", "h264", "hevc", "vp9", "av1", "mpeg4"):
+            w, h = float(m.group(2)), float(m.group(3))
+    if re.search(r"Stream #\d+:\d+.*?:\s*Audio:", err):
+        has_audio = True
+    if not dur and not w:
+        return None
+    return {"duration": dur, "width": w, "height": h, "audio": has_audio}
 
 
 def validate(path, min_dur=8.0, max_dur=61.0):
@@ -33,27 +57,22 @@ def validate(path, min_dur=8.0, max_dur=61.0):
         return False, f"file too small ({size_mb:.1f} MB) - probably corrupt"
     info = probe(path)
     if info is None:
-        print("WARN: ffprobe not available - skipped technical checks")
-        return True, "ffprobe missing (warn-only pass)"
-    try:
-        dur = float(info.get("format", {}).get("duration", 0))
-    except (TypeError, ValueError):
-        dur = 0.0
+        # Fail closed rather than passing: an unprobeable file is not something
+        # to upload blind.
+        return False, "could not probe the file (ffmpeg unavailable or output unreadable)"
+    dur = info["duration"]
     if dur < min_dur or dur > max_dur:
         return False, f"duration {dur:.1f}s outside {min_dur}-{max_dur}s (Shorts max 60s)"
-    streams = info.get("streams", [])
-    v = next((s for s in streams if s.get("codec_type") == "video"), None)
-    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    if v is None:
-        return False, "no video stream"
-    w, h = int(v.get("width", 0)), int(v.get("height", 0))
+    w, h = info["width"], info["height"]
+    if not w or not h:
+        return False, "no video stream detected"
     if h <= w:
-        return False, f"not vertical ({w}x{h}) - needs 9:16 portrait"
-    if a is None:
+        return False, f"not vertical ({int(w)}x{int(h)}) - needs 9:16 portrait"
+    if not info["audio"]:
         return False, "no audio stream - video must keep audio"
     if w < 480:
-        return False, f"resolution too low ({w}x{h})"
-    return True, f"ok {w}x{h} {dur:.1f}s"
+        return False, f"resolution too low ({int(w)}x{int(h)})"
+    return True, f"ok {int(w)}x{int(h)} {dur:.1f}s"
 
 
 if __name__ == "__main__":

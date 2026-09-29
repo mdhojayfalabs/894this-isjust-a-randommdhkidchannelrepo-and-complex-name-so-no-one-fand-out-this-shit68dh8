@@ -1,15 +1,15 @@
 {
-  "day": 4,
-  "title": "Magic Ice Cream Machine",
+  "day": 16,
+  "title": "Magic Balloon Animals",
   "bpm": 112,
-  "seed": 11,
+  "seed": 23,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji pushes a glowing golden coin into a colourful magic ice cream machine on a low table The machine whirls with sparkles and a giant rainbow ice cream pops out with a dancing teddy bear on top",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji's face fills the frame, eyes huge, mouth open, pointing at the coin slot in delight",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam runs in, laughs and takes the giant ice cream, jumping up and down",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. She licks it, giggles, and a tiny ice cream puppy appears beside her wagging its tail",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both kids face camera waving, then Hoji points back at the coin slot so the shot loops"
+    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji pumps a balloon; it twists itself into a glowing pink dog The balloon dog barks a squeaky bark and runs circles around Hoji",
+    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Mariyam pumps another; it becomes a giant yellow giraffe",
+    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. A whole parade of balloon animals marches across the grass",
+    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Both kids ride on the giant balloon giraffe, waving and laughing",
+    "Setting: sunny kids garden, bright green grass, big blue sky, colourful flowers and a small slide. Hoji ties off a new balloon and holds it to camera, looping to the start"
   ],
   "beats": [
     {

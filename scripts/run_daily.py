@@ -43,8 +43,11 @@ def _x(s):
     if not n:
         vals = os.environ.get("NAMES", "").split("|")
         n = {k: v for k, v in zip(["A", "B", "CH", "CHT"], vals) if v}
+    # Defensive: YAML parses `- {CH}` as the flow mapping {'CH': None}, not the
+    # string "{CH}". Anything non-str is stringified so a malformed calendar
+    # cannot smuggle a dict into the upload body.
     if not isinstance(s, str):
-        return s
+        s = str(s)
     for k, v in n.items():
         s = s.replace("{" + k + "}", str(v))
     return s
@@ -53,7 +56,14 @@ def repo_root():
 
 
 def alert(msg):
-    """At most one reminder per day (any kind) to avoid ping spam."""
+    """Send at most one reminder per day to avoid ping spam.
+
+    The suppression is Telegram-side ONLY. The message is always written to
+    stdout, because the previous behaviour hid real failures: a failed run wrote
+    last_alert.txt, so every later run returned non-zero with no output at all
+    and the cause was invisible in the workflow log.
+    """
+    print(f"[alert] {msg}", flush=True)
     la = os.path.join("state", "last_alert.txt")
     today = dt.date.today().isoformat()
     if os.path.exists(la) and open(la).read().strip() == today:
@@ -74,8 +84,26 @@ def write_state(day):
 
 
 def find_media(day):
+    """Locate the finished Short for this day, generating it if absent.
+
+    The old design assumed videos/day_NN.mp4 was already on disk, so every run
+    died with "WAIT day NN: media not found". Generation is now part of the
+    publish path: build the clip, then upload it.
+    """
     files = sorted(glob.glob(os.path.join("videos", f"day_{day}*.mp4")))
-    return files[0] if files else None
+    if files:
+        return files[0]
+    # not there yet - try to make it
+    try:
+        from generate_day import generate
+        p = generate(day)
+        return str(p) if p else None
+    except SystemExit as e:
+        print(f"generate_day: {e}")
+        return None
+    except Exception as e:
+        print(f"generate_day failed: {type(e).__name__}: {e}")
+        return None
 
 
 def load_calendar(day):
@@ -118,7 +146,16 @@ def publish_slot():
         return 1
     media = find_media(day)
     if media is None:
-        alert(f"WAIT day {day}: media not found (videos/day_{day}*.mp4). Will retry.")
+        # Distinguish the real causes so the Telegram alert is actionable.
+        if not os.path.exists(os.path.join("packages", f"day_{day}.json")):
+            alert(f"WAIT day {day}: no packages/day_{day}.json exists, so there "
+                  f"is nothing to generate.")
+        elif not os.environ.get("PIXAZO_API_KEY"):
+            alert(f"FAIL day {day}: PIXAZO_API_KEY missing from the workflow "
+                  f"env, so generation cannot run.")
+        else:
+            alert(f"WAIT day {day}: generation failed - see the workflow log. "
+                  f"Will retry on the next probe.")
         return 0
     ok, why = validate(media)
     if not ok:

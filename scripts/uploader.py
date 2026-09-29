@@ -30,10 +30,15 @@ def upload_video(path, title, description, tags, privacy="public",
     from googleapiclient.http import MediaFileUpload
 
     creds = Credentials(
-        None,
+        token=None,
         refresh_token=os.environ["YT_REFRESH_TOKEN"],
         client_id=os.environ["YT_CLIENT_ID"],
         client_secret=os.environ["YT_CLIENT_SECRET"],
+        # token_uri defaults to None, and google.oauth2._client.refresh_grant
+        # then raises "The credentials do not contain the necessary fields".
+        # It must be passed explicitly.
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/youtube"],
     )
     yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
     body = {

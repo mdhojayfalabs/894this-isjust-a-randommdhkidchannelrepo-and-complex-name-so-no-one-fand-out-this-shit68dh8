@@ -1,15 +1,15 @@
 {
-  "day": 4,
-  "title": "Magic Ice Cream Machine",
+  "day": 13,
+  "title": "Giant Magic Cupcake",
   "bpm": 112,
-  "seed": 11,
+  "seed": 20,
   "loop_xfade": 0.6,
   "clips": [
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji pushes a glowing golden coin into a colourful magic ice cream machine on a low table The machine whirls with sparkles and a giant rainbow ice cream pops out with a dancing teddy bear on top",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Hoji's face fills the frame, eyes huge, mouth open, pointing at the coin slot in delight",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Mariyam runs in, laughs and takes the giant ice cream, jumping up and down",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. She licks it, giggles, and a tiny ice cream puppy appears beside her wagging its tail",
-    "Setting: cozy kids playroom, pastel walls, wooden floor, wooden toy shelves. Both kids face camera waving, then Hoji points back at the coin slot so the shot loops"
+    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam mixes batter in a huge bowl; it starts glowing pink She pours it into a giant cupcake case; it rises into an enormous cupcake",
+    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Hoji's amazed face appears over the counter edge, eyes huge",
+    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. A cherry the size of a ball bounces onto the top with a boing",
+    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Sprinkles rain down like confetti; both kids hold out their hands catching them",
+    "Setting: bright cheerful kids kitchen, mint-green cabinets, sunny window, colourful utensils. Mariyam lifts a tiny cupcake to camera and blows a sparkle, looping to the start"
   ],
   "beats": [
     {
