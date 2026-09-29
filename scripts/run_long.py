@@ -13,26 +13,11 @@ from build_long import build_compilation
 from ping import send
 from uploader import upload_video
 
-def _x(s):
-    """Substitute {A} {B} {CH} {CHT} tokens. Source: NAMES env (pipe-joined
-    values in fixed order A|B|CH|CHT, assembled in the workflow from NP1-NP3
-    secrets) or NAMES_JSON if present."""
-    import json
-    n = {}
-    raw = os.environ.get("NAMES_JSON", "")
-    if raw:
-        try:
-            n = json.loads(raw)
-        except Exception:
-            n = {}
-    if not n:
-        vals = os.environ.get("NAMES", "").split("|")
-        n = {k: v for k, v in zip(["A", "B", "CH", "CHT"], vals) if v}
-    if not isinstance(s, str):
-        return s
-    for k, v in n.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
+# _x is shared with run_daily on purpose. It used to be duplicated here, and the
+# copy only tried NAMES_JSON and a pipe-joined NAMES - it never JSON-parsed
+# NAMES, which is how the repo secret is actually stored. Every long-form title
+# would therefore have shipped with raw {A}/{B} placeholders in it.
+from run_daily import _x
 def main():
     mode = os.environ.get("MODE", "weekly")
     prefix = "ep" if mode == "episode" else "week"

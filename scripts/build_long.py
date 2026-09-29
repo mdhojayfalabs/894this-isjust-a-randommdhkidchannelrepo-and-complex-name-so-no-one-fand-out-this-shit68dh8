@@ -8,7 +8,25 @@ Returns the output path, or None if not enough unused clips exist yet.
 import glob
 import os
 import re
+import shutil
 import subprocess
+
+
+def _ffmpeg():
+    """Locate an ffmpeg binary: PATH first, then imageio-ffmpeg.
+
+    This file used to shell out to a bare `ffmpeg`, which is not on PATH in the
+    Actions runner - imageio-ffmpeg ships a binary you have to resolve, it does
+    not install one. Every long-form job therefore died on the first clip.
+    """
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
 
 
 def day_num(name):
@@ -31,11 +49,14 @@ def build_compilation(n=6, min_n=None, mode="week"):
         print(f"skipped ({mode}): need {min_n}+ unused clips, found {len(files)}")
         return None
     os.makedirs("build", exist_ok=True)
+    ff = _ffmpeg()
+    if not ff:
+        raise RuntimeError("ffmpeg not found: pip install imageio-ffmpeg")
     norm = []
     for i, f in enumerate(files):
         out = f"build/norm_{i}.mp4"
         subprocess.run(
-            ["ffmpeg", "-y", "-i", f,
+            [ff, "-y", "-i", f,
              "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,"
                     "pad=720:1280:(ow-iw)/2:(oh-ih)/2",
              "-r", "24", "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -49,7 +70,7 @@ def build_compilation(n=6, min_n=None, mode="week"):
     n_comp = len(glob.glob(f"compilations/{mode}_*.mp4")) + 1
     out = f"compilations/{mode}_{n_comp:02d}.mp4"
     subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "build/list.txt",
+        [ff, "-y", "-f", "concat", "-safe", "0", "-i", "build/list.txt",
          "-c", "copy", out],
         check=True, capture_output=True)
     with open(up, "a") as f:

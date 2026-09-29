@@ -1,8 +1,25 @@
 name: w5
 
 on:
-  schedule:
-    - cron: "0 5 * * 0,3,6"
+  # SCHEDULE DISABLED 2026-09-29.
+  #
+  # This workflow auto-uploads long-form compilations. It is disabled on purpose
+  # and this is a deliberate risk decision, not an oversight:
+  #
+  #   1. build_long.py had never been executed once. It shelled out to a bare
+  #      `ffmpeg`, which is not on PATH in the runner, so every scheduled run
+  #      would have died on the first clip. That is now fixed, but "compiles"
+  #      is not "has produced a watchable 6-clip compilation".
+  #   2. It bypassed the gate entirely: no random publish time, no today-count
+  #      check, no attempt cap. w3 + w5 together were 4 long-form uploads a week
+  #      on top of w1's daily Short - 11 uploads/week on a channel with 0
+  #      subscribers. That is the spam pattern that gets a made-for-kids channel
+  #      shadow-banned, which the owner explicitly ruled out.
+  #   3. The long-form intro (owner's requirement: intro on long-form, not on
+  #      Shorts) is still not built.
+  #
+  # Re-enable by restoring the cron line below once a compilation has been built
+  # and watched end to end, and once the intro exists.
   workflow_dispatch: {}
 
 concurrency:
