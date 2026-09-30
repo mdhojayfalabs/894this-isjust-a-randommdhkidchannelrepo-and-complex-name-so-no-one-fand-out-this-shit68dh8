@@ -70,7 +70,8 @@ def core_bbox(key_bgr, thresh=232, pad=0):
 
 
 def composite(key_bgr, plate_bgr, target_h_frac=0.62, cx_frac=0.50,
-              cy_frac=0.50, shade=0.16, scale=1.0, backdrop=0.30):
+              cy_frac=0.50, shade=0.16, scale=1.0, backdrop=0.30,
+              erode=3):
     """Place the character on the plate, preserving his aspect ratio.
 
     The key frame is portrait (9:16) and the plate is landscape, so the
@@ -86,7 +87,23 @@ def composite(key_bgr, plate_bgr, target_h_frac=0.62, cx_frac=0.50,
     ph, pw = plate_bgr.shape[:2]
     kh, kw = key_bgr.shape[:2]
 
-    m = character_matte(key_bgr)
+    # Erode the HARD matte, then feather. The key frame's background is pure
+    # white, so the pixels where the character's edge blends into it are
+    # near-white too - measured grey 200-249 at the matte edge. Feathered
+    # straight from there, every edge pixel is a half-character/half-white
+    # blend, and the composite leaves a white halo around the whole silhouette:
+    # the "pasted sticker" look. Eroding AFTER feathering only slides the same
+    # fringe inward and halves it; eroding the hard mask first discards it.
+    # Cost is ~3px on a ~1200px-tall character.
+    hard = _core_matte(key_bgr)
+    if erode:
+        k = np.ones((erode * 2 + 1, erode * 2 + 1), np.uint8)
+        hard = cv2.erode(hard, k, iterations=1)
+        if not hard.any():
+            raise RuntimeError("matte eroded away; erode is too large")
+    m = hard
+    if m.max() and True:
+        m = cv2.GaussianBlur(m, (19, 19), 0)
     ys, xs = np.nonzero(m > 127)
     if not len(xs):
         raise RuntimeError("no character found in the key frame")
@@ -136,8 +153,11 @@ def composite(key_bgr, plate_bgr, target_h_frac=0.62, cx_frac=0.50,
     full_m = np.zeros((ph, pw), np.uint8)
     full_m[y0:y0 + new_h, x0:x0 + new_w] = subm
 
-    # contact shadow so the feet are grounded rather than pasted on
-    band = max(6, int(new_h * 0.05))
+    # Contact shadow so the feet are grounded rather than pasted on. The band is
+    # a share of the character's own height, so it stays proportional when he is
+    # scaled down for a wide shot - a fixed pixel band vanishes on small
+    # characters and looks like a smudge on large ones.
+    band = max(10, int(new_h * 0.075))
     foot = np.zeros((ph, pw), np.float32)
     fy1 = min(ph, y0 + new_h + band)
     foot[max(0, y0 + new_h - band):fy1, x0:x0 + new_w] = 1.0

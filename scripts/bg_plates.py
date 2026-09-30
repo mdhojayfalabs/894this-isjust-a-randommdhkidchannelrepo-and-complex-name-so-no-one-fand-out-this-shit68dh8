@@ -216,16 +216,31 @@ SCENES = {"playroom": playroom, "kitchen": kitchen, "garden": garden}
 
 
 def plate(scene, seed=7, w=W, h=H):
-    """Build one plate. Unknown names fall back to the playroom.
+    """Build one plate at ANY aspect, natively drawn - never resized.
 
     Returns BGR, because everything downstream is OpenCV. The scenes are
     composed in RGB (PIL needs that for drawing), so the channels are swapped
     here. Without this the plate's red and blue trade places and a brown wooden
     floor renders blue - which is exactly what happened before this was caught.
+
+    Every scene places its furniture as fractions of the module-level W and H,
+    so drawing at the requested size lays the room out correctly at that aspect.
+    Resizing a 1280x704 plate down to 720x1280 instead would squash the room and
+    waste most of it, because a 9:16 crop of a 16:9 plate uses only 37% of the
+    area. The stills route has no model forcing landscape, so it asks for a
+    portrait plate and gets a real vertical room.
     """
+    import cv2                                    # lazy: not needed to import
     fn = SCENES.get(scene, playroom)
-    a = fn(seed)
-    if (a.shape[1], a.shape[0]) != (w, h):
+    global W, H
+    ow, oh = W, H
+    try:
+        if (w, h) != (ow, oh):
+            W, H = w, h
+        a = fn(seed)
+    finally:
+        W, H = ow, oh
+    if a.shape[1] != w or a.shape[0] != h:        # scene ignored the size
         a = cv2.resize(a, (w, h), interpolation=cv2.INTER_AREA)
     return a[:, :, ::-1]
 
