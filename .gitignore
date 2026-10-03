@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 build/
 videos/*.mp4
+# scratch dirs the renderers write frames and clips into
+_stills/
+_stills_test.mp4
+_*.mp4
+_plate_*.png
+.tmp/
+*.wav
