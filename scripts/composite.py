@@ -204,3 +204,84 @@ if __name__ == "__main__":
         cv2.imwrite(f"/tmp/comp_{name}.png", img)
         print(f"{name}: composite {img.shape} matte coverage "
               f"{(m > 8).mean() * 100:.1f}%")
+
+
+def composite_pair(plate_bgr, specs, shade=0.16, backdrop=0.30, erode=3):
+    """Place TWO OR MORE characters on one plate.
+
+    The old videos that the channel owner rates as good always show Hoji AND
+    Mariyam together. Feeding a single-character key frame to the model is why
+    the rebuilt Short came back as one boy alone on an empty background - the
+    "no context" complaint. This places every character in `specs` on the same
+    plate, grounds each with its own contact shadow, and darkens the room once
+    behind the whole group rather than once per character.
+
+    specs: list of dicts, each
+        key   - BGR cut-out on white (must be a clean key, not a composite)
+        frac  - target height as a fraction of the plate's height
+        x     - centre x as a fraction of the plate width
+        y     - centre y as a fraction of the plate height
+        mirror- flip horizontally
+
+    Returns (image, matte, boxes) where boxes is a list of (x, y, w, h).
+    """
+    import cv2 as _cv2
+    ph, pw = plate_bgr.shape[:2]
+    out = plate_bgr.astype(np.float32).copy()
+
+    placed = []
+    for s in specs:
+        key = s["key"]
+        hard = _core_matte(key)
+        if erode:
+            k = np.ones((erode * 2 + 1, erode * 2 + 1), np.uint8)
+            hard = _cv2.erode(hard, k, iterations=1)
+        if not hard.any():
+            raise RuntimeError("matte eroded away for one of the characters")
+        m = _cv2.GaussianBlur(hard, (19, 19), 0)
+        ys, xs = np.nonzero(m > 127)
+        kx0, ky0, kx1, ky1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+        ch, cw = ky1 - ky0, kx1 - kx0
+        want_h = int(s["frac"] * ph)
+        f = want_h / max(ch, 1)
+        new_w, new_h = max(1, int(cw * f)), max(1, int(ch * f))
+        sub = key[ky0:ky1 + 1, kx0:kx1 + 1]
+        subm = m[ky0:ky1 + 1, kx0:kx1 + 1]
+        if s.get("mirror"):
+            sub, subm = sub[:, ::-1], subm[:, ::-1]
+        sub = _cv2.resize(sub, (new_w, new_h), interpolation=_cv2.INTER_LANCZOS4)
+        subm = _cv2.resize(subm, (new_w, new_h), interpolation=_cv2.INTER_LANCZOS4)
+        a = (subm.astype(np.float32) / 255.0)[:, :, None]
+        x0 = int(np.clip(s["x"] * pw - new_w / 2.0, 0, pw - new_w))
+        y0 = int(np.clip(s["y"] * ph - new_h / 2.0, 0, ph - new_h))
+        placed.append((x0, y0, new_w, new_h, a, sub))
+
+    # darken the room once, behind the whole group, BEFORE any compositing -
+    # applied after, it darkens the characters too and they dissolve into the
+    # background, which is the exact defect being fixed
+    if backdrop:
+        yy, xx = np.mgrid[0:ph, 0:pw]
+        behind = np.zeros((ph, pw), np.float32)
+        for x0, y0, w, h, _a, _s in placed:
+            d = np.sqrt(((xx - (x0 + w / 2.0)) / (w * 1.15)) ** 2
+                        + ((yy - (y0 + h / 2.0)) / (h * 0.70)) ** 2)
+            behind = np.maximum(behind, np.clip(1.0 - d, 0.0, 1.0) ** 1.4)
+        out *= (1.0 - backdrop * behind)[:, :, None]
+
+    full = np.zeros((ph, pw), np.uint8)
+    boxes = []
+    for x0, y0, w, h, a, sub in placed:
+        roi = out[y0:y0 + h, x0:x0 + w]
+        out[y0:y0 + h, x0:x0 + w] = roi * (1 - a) + sub.astype(np.float32) * a
+        full[y0:y0 + h, x0:x0 + w] = np.maximum(
+            full[y0:y0 + h, x0:x0 + w], (a[:, :, 0] * 255).astype(np.uint8))
+        boxes.append((x0, y0, w, h))
+        # contact shadow under each pair of feet
+        band = max(10, int(h * 0.075))
+        foot = np.zeros((ph, pw), np.float32)
+        fy1 = min(ph, y0 + h + band)
+        foot[max(0, y0 + h - band):fy1, x0:x0 + w] = 1.0
+        foot = _cv2.GaussianBlur(foot, (0, 0), band * 1.8)
+        out *= (1.0 - shade * foot)[:, :, None]
+
+    return np.clip(out, 0, 255).astype(np.uint8), full, boxes
