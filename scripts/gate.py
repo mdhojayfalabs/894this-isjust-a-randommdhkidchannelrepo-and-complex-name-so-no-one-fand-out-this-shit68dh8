@@ -43,7 +43,11 @@ def load_plan(today):
     """Today's random target second, plus the attempt counter."""
     path = os.path.join("state", "plan.json")
     plan = _read_json(path)
-    if not plan or plan.get("date") != today:
+    # A plan is usable only if it is today's AND carries a target. The runner
+    # used to write {date, offset1, offset2}; a plan left in that shape on the
+    # same day it was written passes the date check, lacks "target", and crashes
+    # on plan["target"] at the first probe. Treat a missing target as stale.
+    if not plan or plan.get("date") != today or "target" not in plan:
         # A brand-new day: one random second anywhere in 0-24h.
         plan = {
             "date": today,
