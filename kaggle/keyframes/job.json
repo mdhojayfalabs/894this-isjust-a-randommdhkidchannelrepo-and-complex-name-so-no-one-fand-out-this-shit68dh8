@@ -1,0 +1,9 @@
+{
+  "prompt": "Hoji and Mariyam stand in the playroom waving both hands and bouncing gently, looking at each other and laughing. The room, the toy shelf and the window stay completely still. Only the two children move.",
+  "key": "scene_pair_key.png",
+  "seconds": 5,
+  "fps": 24,
+  "steps": 30,
+  "guidance": 5.0,
+  "seed": 7
+}

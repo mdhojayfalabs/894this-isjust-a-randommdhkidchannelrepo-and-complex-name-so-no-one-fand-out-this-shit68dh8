@@ -1,0 +1,20 @@
+{
+  "id": "mdhkids/wan-clip",
+  "title": "Wan Clip",
+  "code_file": "wan_clip.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": [
+    "mdhkids/mdh-keyframes",
+    "mdhkids/mdh-video-deps"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": [
+    "nhtdngtrn/wan2-2-5b-diffuser/pytorch/default/1"
+  ]
+}
