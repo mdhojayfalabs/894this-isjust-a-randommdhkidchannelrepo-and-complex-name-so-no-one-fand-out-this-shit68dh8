@@ -232,19 +232,59 @@ module granularity, and accelerate is moving the entire ~16.6 GB int8 transforme
 14.56 GiB card in one go. `torchao`'s `int4_weight_only()` — which would bring it to ~8.3 GB
 and fit — raises a meta-registration error in the torchao version available on the runner.
 
-**Next attempt, in order of likelihood:**
+### Versions 16–21: four more memory strategies, all blocked by the same wall
 
-1. **Force block-level offload.** Set `transformer._no_split_modules = ["HunyuanVideo15TransformerBlock"]`
-   (or confirm the config declares it) so accelerate moves one block at a time instead of the
-   whole 54-block stack. This is the cheapest fix and needs no re-quantisation.
-2. **Quantise the text encoder too.** The Qwen2.5-VL language tower is ~15 GB in bf16; int8
-   brings it to ~7.5 GB, which leaves headroom once the transformer is also smaller.
-3. **Load the transformer with `device_map="auto"`, `max_memory={0: "13GiB", "cpu: "28GiB"}`**,
-   letting accelerate split it across GPU and CPU itself, and drop the pipeline-level offload.
-4. **Use the 480p variant** (`transformer/480p_i2v`) and lower `num_frames` — smaller activations,
-   same weight size. Only helps if the OOM is activation-driven rather than weight-driven.
-5. **Retry int4** with the API the installed torchao actually exposes (`int4_weight_only(group_size=...)`,
-   or `quantize_(m, int4_quantize(...))`) — the current call form is what fails.
+| v | Strategy | Result |
+|---|---|---|
+| 16 | `_exclude_from_cpu_offload=["transformer"]` + `enable_model_cpu_offload` + `enable_group_offload(block_level)` | group offload **refused**: *"Cannot apply group offloading to a module that is already applying an alternative offloading strategy from Accelerate"* — the exclusion attribute does **not** actually stop `enable_model_cpu_offload` from hooking the transformer. Fell back to sequential → meta error |
+| 17 | accelerate `cpu_offload()` called **directly** on text_encoder / text_encoder_2 / image_encoder / vae, then `enable_group_offload` on the transformer | **all four offloads succeeded, group offload succeeded, `RENDERING` started** — then `RuntimeError: Tensor on device meta is not on the expected device cuda:0!` |
+| 18 | no torchao at all; group offload for transformer **to disk** (`offload_to_disk_path=/tmp/...`) | kernel **hard-killed, log came back 2 bytes**. Kaggle's `/tmp` is a small tmpfs and cannot hold the 33 GB transformer |
+| 19 | `from_pretrained(device_map="auto", low_cpu_mem_usage=False)` | `ValueError: You cannot set low_cpu_mem_usage to False while using device_map=auto` |
+| 20 | `device_map="auto"` (low_cpu_mem_usage defaulted True) | `ValueError: weight is on the meta device, we need a value to put in on 0` from `dispatch_model` |
+| 21 | load with `low_cpu_mem_usage=False` (verified `1801/1801` params real), then `infer_auto_device_map` + `dispatch_model` manually | `device map: 63 entries`, `dispatched across gpu+cpu at block granularity`, `RENDERING` — **then the identical meta error** |
 
-GPU budget is healthy for this: **4.97 h used, 25.03 h of 30.00 h remaining, refresh 2026-10-10.**
+**Diagnosis of the final wall.** The v17/v21 traceback is:
+
+```
+attn_output = linear(attn_output, out_proj_weight, out_proj_bias)
+  ...
+  output = prims.add(a, b)
+  ...
+  utils.check_same_device(*args_, allow_cpu_scalar_tensors=True)
+  raise RuntimeError(msg)
+RuntimeError: Tensor on device meta is not on the expected device cuda:0!
+```
+
+`prims.add` and `check_same_device` both live in `torch/_meta_registrations.py`, so part of the
+forward is executing under **fake-tensor mode**, not merely holding a stale device placement.
+Accelerate's offload hooks fire on *module* `forward` calls, but diffusers' attention reaches
+`to_out[0].weight` / `.bias` **directly**, bypassing the hook, so those parameters are never
+onloaded out of the offloaded/meta representation.
+
+Two further facts that narrow the fix:
+
+- The runner has **two** T4s (`cuda device count: 2`). Splitting the transformer across both
+  gives 2 × 14.56 GiB = 29.1 GiB, which still cannot hold 33 GB bf16 — but *can* hold ~16.6 GB
+  int8 at 8.3 GB per card.
+- torchao's `int8_weight_only()` is what puts the bias on meta. A **hand-written** int8 cast
+  (weight → int8 + per-channel fp16 scale, dequantised in a custom `Linear.forward`) avoids
+  torchao entirely and keeps every parameter a real, movable tensor.
+
+**Next attempt, in order:**
+
+1. **Two-GPU split in fp8.** `device_map={0: "7GiB", 1: "7GiB"}` with
+   `torch_dtype=torch.float8_e4m3fn` at load time — 16.6 GB total, 8.3 GB per card, and no
+   `.to()` ever happens on an fp8 tensor (which is what broke the earlier fp8 attempt).
+2. **Hand-rolled int8 Linear** that replaces `nn.Linear` in the transformer, dequantising
+   inside `forward`. Every parameter stays real; no accelerate offloading is needed at all
+   because 8.3 GB per card fits without it.
+3. **Retry `enable_group_offload` on the transformer only**, with the pipeline never calling any
+   offload method — i.e. reproduce v17 but replace `cpu_offload` on the text encoder with a
+   group offload too, so nothing is left in fake-tensor mode.
+4. **480p variant** (`transformer/480p_i2v`) plus `num_frames=61` (2.5 s) as a pure
+   activation-memory reduction, useful if the wall turns out to be activation- rather than
+   weight-driven.
+
+GPU budget is healthy for this: **6.07 h used, 23.93 h of 30.00 h remaining, refresh 2026-10-10.**
+Each attempt costs ~0.2 h, so roughly 100 more attempts fit inside the quota.
 

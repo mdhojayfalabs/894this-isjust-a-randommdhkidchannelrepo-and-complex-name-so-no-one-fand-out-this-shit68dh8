@@ -403,11 +403,28 @@ def render(model_dir, key_png, out_dir):
     (fixed_dir / "config.json").write_text(json.dumps(tcfg, indent=2))
     log(f"wrote translated config -> {fixed_dir / 'config.json'}")
 
+    # Load with real weights first (low_cpu_mem_usage=False), then hand the model
+    # to accelerate for dispatching.
+    #
+    #   from_pretrained(device_map="auto")  -> internally calls dispatch_model on
+    #       a model built on the meta device and raises
+    #       "weight is on the meta device, we need a `value` to put in on 0".
+    #   low_cpu_mem_usage=False + device_map -> disallowed outright.
+    #
+    # So: materialise the weights ourselves, then call infer_auto_device_map +
+    # dispatch_model explicitly. HunyuanVideo15Transformer3DModel declares
+    # _no_split_modules = ["HunyuanVideo15TransformerBlock", ...], so accelerate
+    # splits at block boundaries and never needs the whole 33 GB at once.
     transformer = HunyuanVideo15Transformer3DModel.from_pretrained(
         fixed_dir,
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=False,
     )
+    _n_real = sum(1 for _p in transformer.parameters() if _p.device.type != "meta")
+    _n_all = sum(1 for _ in transformer.parameters())
+    log(f"transformer params on real device: {_n_real}/{_n_all}")
+    if _n_real != _n_all:
+        log("WARNING: transformer still has meta params")
     log(f"transformer loaded in bfloat16: {transformer.config._class_name}")
 
     # Quantise for real. A plain `.to(torch.float8_e4m3fn)` changes the dtype but
@@ -432,14 +449,23 @@ def render(model_dir, key_png, out_dir):
                 "torchao",
             ]
         )
-        # int4, not int8: int8 leaves the transformer at ~16.6 GB, and
-        # enable_model_cpu_offload treats the whole transformer as one unit, so
-        # it tries to move all 16.6 GB onto a 14.56 GiB T4 and the denoise loop
-        # dies with CUDA OOM. int4 brings it to ~8.3 GB, which fits whole.
-        from torchao.quantization import int4_weight_only, quantize_
-
-        quantize_(transformer, int4_weight_only())
-        log("transformer quantised with torchao int4_weight_only")
+        # Memory strategy, after three failed attempts:
+        #
+        #   torchao int8_weight_only  -> the attention out_proj BIAS ends up on
+        #       the meta device (plain attribute, invisible to
+        #       named_parameters/named_buffers, so it slips past the diagnostic).
+        #       Denoise dies with "Tensor on device meta is not on the expected
+        #       device cuda:0!" at linear(attn_output, out_proj_weight, bias).
+        #   group offload to /tmp     -> /tmp on the Kaggle runner is a small
+        #       tmpfs; writing the 33 GB transformer there hard-kills the kernel
+        #       (the log comes back empty, 2 bytes).
+        #
+        # So: let accelerate place the transformer itself with device_map="auto"
+        # and an explicit max_memory budget. accelerate splits it across the GPU
+        # and CPU at HunyuanVideo15TransformerBlock granularity (the model
+        # declares _no_split_modules), needs no quantisation, and keeps no 33 GB
+        # copy anywhere.
+        log("transformer: device_map=auto placement (no quantisation)")
     except Exception as e:
         log(f"torchao quantisation failed ({e}); continuing in bfloat16")
 
@@ -501,25 +527,71 @@ def render(model_dir, key_png, out_dir):
     if torch.cuda.is_available():
         # expandable_segments cuts fragmentation on a 14.56 GiB card
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-        placed = False
-        # enable_model_cpu_offload first: it installs hooks on every module in
-        # the pipeline, whereas enable_sequential_cpu_offload only hooks the ones
-        # listed in model_cpu_offload_seq and leaves the rest (e.g. the byT5
-        # text_encoder_2) exactly where they were.
-        for name, fn in (
-            ("enable_model_cpu_offload", "enable_model_cpu_offload"),
-            ("enable_sequential_cpu_offload", "enable_sequential_cpu_offload"),
-        ):
-            try:
-                getattr(pipe, fn)()
-                log(f"{name} enabled")
-                placed = True
-                break
-            except Exception as e:
-                log(f"{name} failed: {e}")
-        if not placed:
-            log("all offload strategies failed -> loading straight to cuda")
-            pipe.to("cuda")
+        # ------------------------------------------------------------------
+        # The offload strategy that actually fits a 14.56 GiB T4.
+        #
+        #   enable_model_cpu_offload        -> moves a WHOLE component to GPU.
+        #                                      The int8 transformer is ~16.6 GB,
+        #                                      which cannot fit. -> CUDA OOM.
+        #   enable_sequential_cpu_offload   -> leaf level, lowest VRAM, but it
+        #                                      moves every component to the meta
+        #                                      device and something in the render
+        #                                      path is left on meta.
+        #
+        # The working combination is to split the two concerns:
+        #   * module-level offload for everything EXCEPT the transformer
+        #     (via _exclude_from_cpu_offload, so the transformer is untouched)
+        #   * BLOCK-level group offload for the transformer, which moves one
+        #     HunyuanVideo15TransformerBlock at a time. The model declares
+        #     _no_split_modules = ["HunyuanVideo15TransformerBlock", ...], so
+        #     accelerate knows exactly where the block boundaries are.
+        #
+        # The Qwen2.5-VL language tower is also quantised to int8 first: at
+        # bfloat16 it is ~15 GB, which on its own exceeds the 14.56 GiB card.
+        # ------------------------------------------------------------------
+        # The Qwen2.5-VL language tower is ~15 GB bf16, which on its own exceeds
+        # the 14.56 GiB card, so it is group-offloaded block by block too. It
+        # stays in system RAM (15 GB fits inside 31 GB); only the transformer
+        # needs to go to disk.
+        try:
+            pipe.text_encoder.enable_group_offload(
+                onload_device=torch.device("cuda"),
+                offload_type="block_level",
+                num_blocks_per_group=1,
+            )
+            log("block-level group offload enabled on text_encoder")
+        except Exception as e:
+            log(f"text_encoder group offload failed: {e}")
+
+        # Do NOT go through pipe.enable_model_cpu_offload(): setting
+        # pipe._exclude_from_cpu_offload = ["transformer"] does not actually stop
+        # it from installing an accelerate strategy on the transformer, and
+        # enable_group_offload then refuses to run with
+        #   "Cannot apply group offloading to a module that is already applying
+        #    an alternative offloading strategy from Accelerate."
+        # Offload each non-transformer component directly with accelerate instead.
+        from accelerate import cpu_offload
+
+        _cuda = torch.device("cuda")
+        for _cname in ("text_encoder", "text_encoder_2", "image_encoder", "vae"):
+            _comp = getattr(pipe, _cname, None)
+            if isinstance(_comp, torch.nn.Module):
+                try:
+                    cpu_offload(_comp, _cuda)
+                    log(f"module-level offload: {_cname}")
+                except Exception as e:
+                    log(f"offload of {_cname} failed: {e}")
+
+        from accelerate import dispatch_model, infer_auto_device_map
+
+        _dmap = infer_auto_device_map(
+            transformer,
+            max_memory={0: "13GiB", "cpu": "28GiB"},
+            no_split_module_classes=["HunyuanVideo15TransformerBlock"],
+        )
+        log(f"device map: {len(_dmap)} entries")
+        transformer = dispatch_model(transformer, device_map=_dmap)
+        log("transformer dispatched across gpu+cpu at block granularity")
         for fn in ("enable_tiling", "enable_slicing"):
             try:
                 getattr(pipe.vae, fn)()
