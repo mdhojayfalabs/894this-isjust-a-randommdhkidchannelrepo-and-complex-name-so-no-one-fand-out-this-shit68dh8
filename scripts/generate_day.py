@@ -19,6 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from build_stills import build as build_free  # noqa: E402
 from build_short import build  # noqa: E402
 
 # The character key frame. It lives in the repo and is served from raw.githubusercontent,
@@ -53,19 +54,36 @@ def generate(day, key=None, image_url=None, workdir=None, force=False):
         return dest
 
     pkg = json.loads(Path(pp).read_text())
-    key = key or os.environ.get("PIXAZO_API_KEY")
-    if not key:
-        raise SystemExit(
-            "PIXAZO_API_KEY not set. Add it to repo Secrets and to the "
-            "workflow's env block, or pass --key.")
-
-    image_url = image_url or os.environ.get("HOJI_KEY_URL") or DEFAULT_KEY_IMAGE
     workdir = Path(workdir or f"build/day_{day}")
     workdir.mkdir(parents=True, exist_ok=True)
 
-    print(f"generate_day: day {day} -> {dest}")
-    print(f"generate_day: key image {image_url}")
-    build(pkg, dest, image_url, key, workdir)
+    # ------------------------------------------------------------------
+    # PRIMARY ROUTE: build_stills.py -- free, card-free, scriptable, no API key,
+    # no wallet, no rate limit, no GPU. It renders the composed key frame into
+    # shots with a moving 9:16 crop window and muxes a synthesised music bed.
+    #
+    # The previous primary was build_short.py -> the Pixazo gateway. That wallet
+    # is empty (402 Insufficient Balance, recorded in providers.py), and the
+    # user's standing constraint is FREE ONLY, so Pixazo is demoted to a
+    # fallback that only runs if a key is actually present.
+    # ------------------------------------------------------------------
+    key_frame = os.environ.get("KEY_FRAME") or "assets/scene_pair_key.png"
+    try:
+        import cv2
+
+        key_bgr = cv2.imread(key_frame)
+    except Exception as e:
+        key_bgr = None
+        print(f"generate_day: cv2 unavailable ({e})")
+    if key_bgr is None:
+        raise SystemExit(
+            f"cannot read key frame {key_frame!r}; set KEY_FRAME to a readable "
+            "9:16 PNG")
+
+    print(f"generate_day: day {day} -> {dest} (free stills route)")
+    print(f"generate_day: key frame {key_frame}")
+    build_free(pkg, key_bgr, str(dest),
+               seed=int(pkg.get("seed", 7) or 7), workdir=str(workdir))
     return dest
 
 
