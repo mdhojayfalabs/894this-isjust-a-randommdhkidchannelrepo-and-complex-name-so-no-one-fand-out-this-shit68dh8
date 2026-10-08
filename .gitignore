@@ -9,3 +9,6 @@ _*.mp4
 _plate_*.png
 .tmp/
 *.wav
+# the day_05 stills collage must never come back - it was published on
+# 2026-10-07 as cE_Rriha_c8 and deleted. Keep it out of git for good.
+videos/day_05.mp4
