@@ -1,0 +1,47 @@
+name: w6
+
+# Manual-only. Deletes one YouTube video by id.
+#
+# Why this exists: on 2026-10-07 the stills route published day_05
+# (YouTube cE_Rriha_c8), which turned out to be a flat 2D vector collage with
+# two 3D-rendered cut-outs pasted on top and no motion at all - measured
+# frame-to-frame mean absolute difference 1.62/255. It has to come down.
+#
+# There is deliberately no schedule: deletion must never happen automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "YouTube video id to delete"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: deps
+        run: pip install -r requirements.txt
+      - name: delete
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: |
+          python - "${{ inputs.video_id }}" <<'PY'
+          import sys, os
+          sys.path.insert(0, "scripts")
+          from uploader import delete_video
+          vid = sys.argv[1].strip()
+          if not vid:
+              raise SystemExit("no video id given")
+          delete_video(vid)
+          PY

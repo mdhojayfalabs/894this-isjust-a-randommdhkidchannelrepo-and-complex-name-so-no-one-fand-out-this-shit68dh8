@@ -61,6 +61,34 @@ def upload_video(path, title, description, tags, privacy="public",
     resp = yt.videos().insert(
         part="snippet,status", body=body, media_body=media).execute()
 
+def delete_video(video_id):
+    """Permanently delete one video by id. Returns the API response.
+
+    Needed on 2026-10-08: day_05 was published as a static collage (YouTube
+    cE_Rriha_c8) and has to come down. Deleting costs 50 quota units versus
+    1,600 for an upload, so this is cheap.
+    """
+    missing = _missing()
+    if missing:
+        raise RuntimeError(
+            "Missing YouTube secrets in GitHub repo Secrets: " + ", ".join(missing))
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["YT_REFRESH_TOKEN"],
+        client_id=os.environ["YT_CLIENT_ID"],
+        client_secret=os.environ["YT_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/youtube"],
+    )
+    yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
+    resp = yt.videos().delete(id=video_id).execute()
+    print(f"[uploader] deleted video {video_id}", flush=True)
+    return resp
+
+
     # Custom thumbnail costs 50 quota units and is worth it for CTR.
     if thumbnail and os.path.exists(thumbnail):
         try:
