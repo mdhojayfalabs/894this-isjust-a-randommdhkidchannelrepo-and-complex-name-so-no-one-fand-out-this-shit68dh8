@@ -20,7 +20,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_stills import build as build_free  # noqa: E402
-from build_short import build  # noqa: E402
 
 # The character key frame. It lives in the repo and is served from raw.githubusercontent,
 # which the Pixazo gateway can fetch. Crop is 286:508:44:152 of the model sheet,
@@ -67,6 +66,38 @@ def generate(day, key=None, image_url=None, workdir=None, force=False):
     # user's standing constraint is FREE ONLY, so Pixazo is demoted to a
     # fallback that only runs if a key is actually present.
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # PUBLISH GATE: the stills route is NOT allowed to publish.
+    #
+    # On 2026-10-07 it published day_05 (YouTube cE_Rriha_c8) and the result was
+    # a flat 2D vector collage with two 3D-rendered cut-outs pasted on top, held
+    # completely static for 25 seconds behind a slow pan. Measured frame-to-frame
+    # mean absolute difference: 1.62 / 255. That is a photograph, not a video.
+    #
+    # The user's benchmark is their own earlier work: dense, saturated,
+    # Pixar-style environments with the characters actually living inside them
+    # and moving. The stills route cannot reach that and never could - it was
+    # only ever a "free, card-free, scriptable" placeholder.
+    #
+    # So this now refuses. find_media() treats a SystemExit as a generation
+    # failure and returns None, which makes publish_slot() alert and upload
+    # NOTHING. Publishing nothing is strictly better than publishing this.
+    #
+    # The real route is HunyuanVideo-1.5 image-to-video on the Kaggle T4
+    # (kaggle/hyclip/hy_clip.py), which conditions on the composed
+    # assets/scene_pair_key.png and actually generates motion.
+    # ------------------------------------------------------------------
+    raise SystemExit(
+        "generate_day: REFUSING to render with build_stills.py. "
+        "The stills route produced a static collage (frame diff 1.62/255) and "
+        "was published as day_05 on 2026-10-07 - it must never publish again. "
+        "Use the HunyuanVideo-1.5 i2v route (kaggle/hyclip) instead. "
+        "Set ALLOW_STILLS_PUBLISH=1 to override, deliberately.")
+
+    # ---- override path, only when explicitly asked for ----
+    if not os.environ.get("ALLOW_STILLS_PUBLISH"):
+        raise SystemExit("unreachable")
+
     key_frame = os.environ.get("KEY_FRAME") or "assets/scene_pair_key.png"
     try:
         import cv2
@@ -80,7 +111,7 @@ def generate(day, key=None, image_url=None, workdir=None, force=False):
             f"cannot read key frame {key_frame!r}; set KEY_FRAME to a readable "
             "9:16 PNG")
 
-    print(f"generate_day: day {day} -> {dest} (free stills route)")
+    print(f"generate_day: day {day} -> {dest} (free stills route, OVERRIDDEN)")
     print(f"generate_day: key frame {key_frame}")
     build_free(pkg, key_bgr, str(dest),
                seed=int(pkg.get("seed", 7) or 7), workdir=str(workdir))
