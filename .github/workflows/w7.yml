@@ -1,17 +1,27 @@
 name: w7
 
-# Render bridge: run the Kaggle HunyuanVideo-1.5 kernel and land its clip in
-# videos/day_NN.mp4 so w1 can publish it without rendering anything itself.
+# Render bridge - DISABLED. Kept for the record.
 #
-# A 5 s clip takes ~9 h (chunked attention on a T4), but a GitHub Actions job is
-# capped at 6 h, so render and publish cannot share a job. This workflow runs
-# every 20 min and does at most one small piece of work:
-#   kernel running      -> do nothing
-#   kernel finished     -> download clip.mp4 -> videos/day_NN.mp4, commit
-#   kernel never ran    -> push a new version to start it
+# The intent was: poll the Kaggle HunyuanVideo-1.5 kernel and land clip.mp4 in
+# videos/day_NN.mp4 so w1 could publish it. It does not work, and the reason is
+# worth writing down so nobody re-derives it:
+#
+#   * The Kaggle credentials are correct. From this workspace the identical
+#     username/key authenticates and `kernels status mdhkids/hy-clip` returns
+#     RUNNING. Length and shape on the runner are identical (7 / 37).
+#   * From a GitHub-hosted runner the same credentials return
+#     "Authentication required to call the Kaggle API." for every endpoint
+#     (kernels list --mine, kernels status, kernels output, kernels push).
+#   * So the block is the runner's network, not the credentials: Kaggle refuses
+#     the Actions egress IP.
+#
+# Therefore the fetch happens from this workspace instead, where it is proven,
+# and the render is committed into videos/day_NN.mp4 directly. w1 then finds it
+# through find_media() and never contacts Kaggle at all.
+#
+# To re-enable, restore the schedule and confirm auth from a runner first:
+#   - run: python3 -m kaggle kernels list --mine -p 1
 on:
-  schedule:
-    - cron: "*/20 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -32,15 +42,10 @@ jobs:
           python-version: "3.12"
       - name: deps
         run: pip install -r requirements.txt kaggle
-      - name: render-bridge
+      - name: probe-auth
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-        run: python scripts/fetch_clip.py
-      - name: commit
         run: |
-          git config user.name "svc-w7"
-          git config user.email "svc-w7@users.noreply.github.com"
-          git add videos/ state/ 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "render: day clip from Kaggle"
-          git push
+          python3 -m kaggle kernels list --mine -p 1 || \
+            echo "Kaggle auth is still refused from GitHub Actions; the render must be fetched from the workspace."
