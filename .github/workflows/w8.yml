@@ -1,0 +1,78 @@
+name: w8
+
+# Weekly / monthly long-form: merge the published Shorts into one video.
+# Fires Sunday 20:00 UTC, after that week's Shorts are all up.
+on:
+  schedule:
+    - cron: "0 20 * * 0"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "week or month"
+        required: false
+        default: "week"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: w8
+  cancel-in-progress: false
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: deps
+        run: pip install -r requirements.txt
+      - name: merge
+        run: python scripts/merge_long.py "${{ inputs.scope || 'week' }}"
+      - name: upload-longform
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import glob, json, os, sys
+          sys.path.insert(0, "scripts")
+
+          metas = sorted(glob.glob("longform/*.json"), key=os.path.getmtime)
+          fresh = [m for m in metas
+                   if os.path.getmtime(m) > os.path.getmtime("longform") - 3600]
+          if not metas:
+              print("no long-form metadata; nothing was merged, skipping upload")
+              sys.exit(0)
+          meta = json.load(open(metas[-1]))
+          if not os.path.exists(meta["file"]):
+              print(f"{meta['file']} missing; skipping upload")
+              sys.exit(0)
+
+          from uploader import upload_video
+          from ping import send
+
+          vid = upload_video(
+              meta["file"], meta["title"], meta["description"],
+              meta.get("tags", []),
+              privacy=meta.get("privacy", "public"),
+              made_for_kids=meta.get("made_for_kids", True))
+          print(f"uploaded {vid}")
+          try:
+              send(f"Long-form up: {meta['title']}\nhttps://youtu.be/{vid}")
+          except Exception as e:
+              print(f"telegram notify failed: {e}")
+          PY
+      - name: commit
+        run: |
+          git config user.name "svc-w8"
+          git config user.email "svc-w8@users.noreply.github.com"
+          git add longform/ state/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "longform: merge + upload"
+          git push
