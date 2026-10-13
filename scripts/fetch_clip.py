@@ -22,6 +22,7 @@ Env:
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,17 +31,63 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 KERNEL = "mdhkids/hy-clip"
 
+# Kaggle credentials. Written to a config file rather than left in the
+# environment: the env-var path works locally but is rejected on the runner,
+# and a config file is the only path proven on both.
+_CFG_DIR = None
+
 
 def log(msg):
     print(f"[fetch] {msg}", flush=True)
 
 
+def cfg_dir():
+    """Materialise kaggle.json once and return the dir holding it."""
+    global _CFG_DIR
+    if _CFG_DIR:
+        return _CFG_DIR
+    user = os.environ.get("KAGGLE_USERNAME", "")
+    key = os.environ.get("KAGGLE_KEY", "")
+    if not user or not key:
+        log("KAGGLE_USERNAME / KAGGLE_KEY not set; no credentials to write")
+        _CFG_DIR = ""
+        return _CFG_DIR
+    d = tempfile.mkdtemp(prefix="kaggle-")
+    f = Path(d, "kaggle.json")
+    f.write_text(json.dumps({"username": user, "key": key}))
+    os.chmod(f, 0o600)
+    _CFG_DIR = d
+    return d
+
+
 def sh(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    env = dict(os.environ)
+    d = cfg_dir()
+    if d:
+        env["KAGGLE_CONFIG_DIR"] = d
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, **kw)
 
 
 def kaggle(*args):
     return sh([sys.executable, "-m", "kaggle", *args])
+
+
+def diagnose():
+    """Safe auth probe: lengths and booleans only, never credential material."""
+    user = os.environ.get("KAGGLE_USERNAME", "")
+    key = os.environ.get("KAGGLE_KEY", "")
+    log(f"creds present: username={bool(user)} (len {len(user)}), "
+        f"key={bool(key)} (len {len(key)})")
+    if not (user and key):
+        return False
+    r = kaggle("kernels", "list", "--mine", "-p", "1")
+    out = ((r.stdout or "") + (r.stderr or ""))
+    ok = r.returncode == 0
+    log(f"kaggle kernels list --mine: rc={r.returncode} "
+        f"auth={'OK' if ok else 'REJECTED'}")
+    if not ok:
+        log(f"    {out.strip()[:400]}")
+    return ok
 
 
 def read_day():
@@ -105,6 +152,10 @@ def download(day):
 def main():
     day = read_day()
     log(f"next_day = {day:02d}")
+    if not diagnose():
+        log("not authenticated to Kaggle; will retry next pass")
+        print(json.dumps({"action": "wait", "day": day, "reason": "no-auth"}))
+        return 0
 
     have = already_have(day)
     if have:
