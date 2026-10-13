@@ -62,7 +62,8 @@ def kernel_status():
     for state in ("COMPLETE", "ERROR", "RUNNING", "QUEUED", "CANCEL"):
         if f"KernelWorkerStatus.{state}" in txt:
             return state, txt.strip().splitlines()[-1]
-    return "UNKNOWN", txt.strip()[-200:]
+    # Never truncate: a truncated error is an undiagnosable error.
+    return "UNKNOWN", txt.strip()[-1500:]
 
 
 def trigger():
@@ -112,34 +113,45 @@ def main():
                           "file": str(have.relative_to(ROOT))}))
         return 0
 
-    state, detail = kernel_status()
-    log(f"kernel {KERNEL}: {state} ({detail})")
-
-    if state == "RUNNING" or state == "QUEUED":
-        # ~9 h render; w7 will be back.
-        print(json.dumps({"action": "wait", "day": day, "kernel": state}))
-        return 0
-
-    if state in ("COMPLETE", "ERROR"):
-        dest = download(day)
-        if dest is None:
-            log("no clip; re-triggering the kernel")
-            if trigger():
-                print(json.dumps({"action": "retrigger", "day": day}))
-                return 0
-            print(json.dumps({"action": "failed", "day": day}))
-            return 1
+    # Output first: this is the only step that actually unblocks publishing,
+    # and it works for a private kernel that we own.
+    dest = download(day)
+    if dest is not None:
         print(json.dumps({"action": "fetched", "day": day,
                           "file": str(dest.relative_to(ROOT))}))
         return 0
 
-    # UNKNOWN - most likely never run in this session. Start it.
-    log("kernel state unknown; triggering a fresh run")
+    state, detail = kernel_status()
+    log(f"kernel {KERNEL}: {state}")
+    if state not in ("UNKNOWN",):
+        log(f"    {detail[:400]}")
+
+    if state in ("RUNNING", "QUEUED"):
+        # ~9 h render; w7 will be back.
+        log("render in progress; nothing to do this pass")
+        print(json.dumps({"action": "wait", "day": day, "kernel": state}))
+        return 0
+
+    # COMPLETE but no clip, ERROR, or UNKNOWN: restart the render if we can.
+    kdir = ROOT / "kaggle" / "hyclip"
+    if not (kdir / "kernel-metadata.json").exists():
+        # Do not hard-fail: w7 runs every 20 min and a red run on every pass
+        # is noise, not signal. The clip download above already succeeded or
+        # will be retried next pass.
+        log(f"no kernel dir at {kdir.relative_to(ROOT)}; cannot re-trigger")
+        log("will retry next pass")
+        print(json.dumps({"action": "wait", "day": day,
+                          "kernel": state, "reason": "no-kernel-dir"}))
+        return 0
+
     if trigger():
+        log("render re-triggered")
         print(json.dumps({"action": "triggered", "day": day}))
         return 0
-    print(json.dumps({"action": "failed", "day": day}))
-    return 1
+
+    log("could not re-trigger; will retry next pass")
+    print(json.dumps({"action": "wait", "day": day, "kernel": state}))
+    return 0
 
 
 if __name__ == "__main__":

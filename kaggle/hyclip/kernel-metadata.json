@@ -1,0 +1,17 @@
+{
+  "id": "mdhkids/hy-clip",
+  "title": "Hy Clip",
+  "code_file": "hy_clip.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": [
+    "mdhkids/mdh-keyframes"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}
