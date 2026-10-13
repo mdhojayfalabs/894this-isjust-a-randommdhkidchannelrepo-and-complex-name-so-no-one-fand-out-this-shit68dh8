@@ -6,6 +6,7 @@
   none  = do nothing
 Missing media: wait for the next probe, at most one reminder per day.
 """
+from pathlib import Path
 import datetime as dt
 import glob
 import json
@@ -130,6 +131,17 @@ def bump_count():
         f.write(f"{today} {read_count() + 1}\n")
 
 
+def available_days():
+    """Every day number that actually has a package on disk."""
+    out = []
+    for f in sorted(Path("packages").glob("day_*.json")):
+        try:
+            out.append(int(f.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return sorted(out)
+
+
 def skip_day():
     """Give up on today's day after the gate's attempt cap.
 
@@ -137,11 +149,30 @@ def skip_day():
     next_day.txt never advances, so every subsequent day retries the same
     broken slot. The clip itself is not lost - packages/day_NN.json still
     exists and can be regenerated on demand.
+
+    BUT the advance must be clamped to the packages that exist. Between
+    2026-10-08 and 2026-10-13 this function incremented unconditionally on
+    every failed slot, so next_day.txt walked from 05 all the way to 148
+    while the packages only run 04-17. From then on load_calendar() returned
+    None for every day and publish_slot() failed instantly with
+    "calendar entry missing" - four times a day, forever, with no way back.
+
+    So: only advance when a package is actually waiting on the other side.
+    Otherwise hold position and say so loudly, so the failure stays visible
+    instead of silently walking off the end of the calendar.
     """
     day = read_state()
-    write_state(f"{int(day) + 1:02d}")
+    nxt = int(day) + 1
+    avail = available_days()
+    if avail and nxt not in avail:
+        alert(f"SKIP day {day}: attempt cap reached, but NO package exists "
+              f"for day {nxt:02d} (packages cover {avail[0]:02d}-{avail[-1]:02d}). "
+              f"Holding at day {day} instead of advancing - advancing blindly "
+              f"is what drove the counter to 148.")
+        return 0
+    write_state(f"{nxt:02d}")
     alert(f"SKIP day {day}: attempt cap reached, nothing published today. "
-          f"Advanced to day {int(day) + 1:02d}.")
+          f"Advanced to day {nxt:02d}.")
     return 0
 
 
