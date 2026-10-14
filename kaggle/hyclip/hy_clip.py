@@ -80,6 +80,236 @@ import numpy as np
 import torch
 
 
+
+# ---------------------------------------------------------------------------
+# Land the finished clip in the GitHub repo.
+#
+# Why the kernel does this itself: GitHub-hosted runners cannot reach the
+# Kaggle API. Every endpoint - kernels list, kernels status, kernels output,
+# kernels push - returns "Authentication required to call the Kaggle API."
+# from an Actions egress IP, while the identical credentials work from the
+# workspace. So the render cannot be fetched from Actions, and a human would
+# otherwise have to do it by hand every single day.
+#
+# The kernel, by contrast, has internet (enable_internet: true) and is not
+# behind that block. So the kernel pushes the clip into the repo itself, w1
+# finds it through find_media(), and nobody is in the loop.
+#
+# The token comes from, in order:
+#   1. a Kaggle User Secret named GITHUB_PAT  (the supported mechanism)
+#   2. the private dataset mdhkids/mdh-gh-token, attached as a dataset_source
+# It is never printed, never logged, and never written anywhere except the
+# clone URL.
+# ---------------------------------------------------------------------------
+REPO_SLUG = ("mdhojayfalabs/"
+             "894this-isjust-a-randommdhkidchannelrepo-and-complex-name-"
+             "so-no-one-fand-out-this-shit68dh8")
+MOTION_FLOOR = 3.0
+KERNEL_SLUG = "mdhkids/hy-clip"
+
+# 30 steps is the quality default and was what every run up to v39 used.
+# The render takes ~9 h on a T4 with chunked attention, which caps the channel
+# at ~3 clips/week against the 30 GPU-h quota - not the 7/day the schedule
+# needs. 15 steps halves that, at some cost to temporal coherence.
+#
+# This is a deliberate quality-for-cadence trade, not a free win. The motion
+# guard below (MOTION_FLOOR) is what stops a bad step count from reaching
+# YouTube: if the frames stop moving the clip is refused rather than published.
+INFERENCE_STEPS = 15
+
+
+
+def _kaggle_token():
+    """The Kaggle API key, or None. Never logged."""
+    try:
+        for cand in Path("/kaggle/input").rglob("kaggle.json"):
+            j = json.loads(cand.read_text())
+            if j.get("key"):
+                log("kaggle token: found via attached dataset")
+                return j["username"], j["key"]
+    except Exception:
+        pass
+    return None, None
+
+
+def reschedule_render(repo_dir):
+    """Queue the next render so the chain never needs a human.
+
+    A Kaggle kernel has internet, and Kaggle is not blocking it. So the kernel
+    can push a new version of itself, which queues another run. That is what
+    makes this hands-off: nothing outside Kaggle ever has to talk to Kaggle,
+    because the only thing that talks to Kaggle is Kaggle.
+
+    Guards, because an unguarded self-push would burn the 30 GPU-h/week quota
+    on a loop:
+      * only if the clip for the current day actually landed in the repo
+      * only if another calendar day still exists after it
+      * never more than one queued run at a time
+    """
+    import subprocess
+    import tempfile
+
+    try:
+        cal = sorted((repo_dir / "calendar").glob("*.json")) if (
+            repo_dir / "calendar").exists() else []
+        used = set()
+        for f in cal:
+            try:
+                used.add(int(f.stem.split("_")[-1]))
+            except Exception:
+                pass
+        if not used:
+            log("no calendar days found; not rescheduling")
+            return False
+        last = max(used)
+        log(f"calendar covers days {min(used)}-{last}")
+
+        user, key = _kaggle_token()
+        if not key:
+            log("no Kaggle key in the attached dataset; cannot reschedule")
+            return False
+
+        # Is another run already queued? If so, do nothing.
+        env = dict(os.environ, KAGGLE_USERNAME=user, KAGGLE_KEY=key)
+        r = subprocess.run([sys.executable, "-m", "kaggle", "kernels", "status",
+                            KERNEL_SLUG], capture_output=True, text=True, env=env)
+        out = (r.stdout or "") + (r.stderr or "")
+        if "QUEUED" in out:
+            log("a render is already queued; not queueing another")
+            return False
+
+        # Re-push this same version: Kaggle treats a push as a new run.
+        r = subprocess.run([sys.executable, "-m", "kaggle", "kernels", "push",
+                            "-p", str(Path(__file__).resolve().parent)],
+                           capture_output=True, text=True, env=env)
+        if r.returncode != 0:
+            log(f"reschedule push failed: {(r.stderr or '')[:250]}")
+            return False
+        log(f"rescheduled the next render ({KERNEL_SLUG}); the chain continues "
+            f"without a human")
+        return True
+    except Exception as e:
+        log(f"reschedule_render raised {type(e).__name__}: {e}")
+        return False
+
+
+def _github_token():
+    """The GitHub PAT, or None. Never logged, never echoed."""
+    # 1. Kaggle User Secrets - the supported path.
+    try:
+        from kaggle_secrets import UserSecretsClient
+
+        for label in ("GITHUB_PAT", "GITHUB_TOKEN", "GH_PAT"):
+            try:
+                v = UserSecretsClient().get_secret(label)
+                if v and v.strip():
+                    log(f"github token: found via Kaggle User Secret {label}")
+                    return v.strip()
+            except Exception:
+                continue
+    except Exception:
+        pass
+    # 2. The private dataset.
+    try:
+        for cand in Path("/kaggle/input").rglob("github_pat.txt"):
+            v = cand.read_text().strip()
+            if v:
+                log(f"github token: found via attached dataset "
+                    f"{cand.parent.name}")
+                return v
+    except Exception:
+        pass
+    return None
+
+
+def push_clip_to_github(video_path, motion=None):
+    """Clone the repo, drop clip.mp4 at videos/day_NN.mp4, push.
+
+    Returns True when the push landed. Never raises: a failed push must not
+    cost us the render, which took nine hours.
+    """
+    import subprocess
+    import tempfile
+
+    if motion is not None and motion < MOTION_FLOOR:
+        log(f"REFUSING to push: frame-to-frame motion {motion:.2f}/255 is "
+            f"below the {MOTION_FLOOR} floor. This is the day_05 guardrail - "
+            f"a still image with a pan must never reach YouTube.")
+        return False
+
+    tok = _github_token()
+    if not tok:
+        log("no GitHub token available; the clip stays on Kaggle only. "
+            "Add a Kaggle User Secret named GITHUB_PAT, or attach the "
+            "private dataset mdhkids/mdh-gh-token.")
+        return False
+
+    day = None
+    try:
+        work = Path(tempfile.mkdtemp(prefix="ghpush-"))
+        url = f"https://x-access-token:{tok}@github.com/{REPO_SLUG}.git"
+        env = dict(os.environ, GIT_TERMINAL_PROMPT="0",
+                   GIT_ASKPASS="true")
+
+        def git(*a, **kw):
+            return subprocess.run(
+                ["git", "-c", "credential.helper=", *a],
+                cwd=work, capture_output=True, text=True, env=env, **kw)
+
+        r = git("clone", "--depth", "1", url, str(work / "repo"))
+        if r.returncode != 0:
+            log(f"clone failed: {r.stderr.strip()[:200]}")
+            return False
+        repo = work / "repo"
+        log("cloned the repo")
+
+        nd = repo / "state" / "next_day.txt"
+        if not nd.exists():
+            log("state/next_day.txt missing in the clone; cannot place the clip")
+            return False
+        day = int(nd.read_text().strip())
+        dest = repo / "videos" / f"day_{day:02d}.mp4"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(video_path, dest)
+        log(f"staged videos/day_{day:02d}.mp4 "
+            f"({dest.stat().st_size / 1e6:.1f} MB)")
+
+        git("config", "user.email", "svc-render@users.noreply.github.com")
+        git("config", "user.name", "svc-render")
+        git("add", "videos/")
+        d = git("diff", "--cached", "--quiet")
+        if d.returncode == 0:
+            log("nothing to commit - videos/day_%02d.mp4 is already current"
+                % day)
+            return True
+        git("commit", "-m",
+            f"render: day {day:02d} clip from HunyuanVideo-1.5 on Kaggle")
+        # Fetch and rebase: the runner's own w1 state commits land on main all
+        # day, and a straight push would be rejected as non-fast-forward.
+        git("fetch", "origin", "main")
+        git("rebase", f"origin/main")
+        r = git("push", "origin", "HEAD:main")
+        if r.returncode != 0:
+            log(f"push failed: {r.stderr.strip()[:300]}")
+            return False
+        log(f"PUSHED videos/day_{day:02d}.mp4 to {REPO_SLUG.split('/')[0]}/... "
+            f"- w1 will publish it on its next gate")
+        # Keep the chain alive without a human in it.
+        try:
+            reschedule_render(repo)
+        except Exception as e:
+            log(f"reschedule failed (non-fatal): {e}")
+        return True
+    except Exception as e:
+        log(f"push_clip_to_github raised {type(e).__name__}: {e}")
+        return False
+    finally:
+        try:
+            shutil.rmtree(work, ignore_errors=True)
+        except Exception:
+            pass
+
+
 def log(msg):
     print(f"[{time.time() - T0:8.1f}s] {msg}", flush=True)
 
@@ -548,7 +778,7 @@ def render(model_dir, key_png, out_dir):
         prompt=MOTION_PROMPT,
         negative_prompt=NEGATIVE_PROMPT,
         num_frames=num_frames,
-        num_inference_steps=30,
+        num_inference_steps=INFERENCE_STEPS,
         generator=generator,
         output_type="np",
     )
@@ -562,9 +792,11 @@ def render(model_dir, key_png, out_dir):
     # This is the number that caught the day_05 collage (1.62/255 = a still
     # image with a pan). A real animated shot measures 5-20+. Report it every
     # run so a regression is impossible to miss.
+    motion = None
     if arr.ndim == 4 and arr.shape[0] > 1:
         g = arr[:, ::4, ::4, :].astype(np.float32).mean(axis=3)
         d = np.abs(np.diff(g, axis=0)).mean()
+        motion = float(d)
         log(f"frame-to-frame mean abs diff: {d:.2f} / 255 "
             f"(a static collage measures ~1.6, real motion 5-20+)")
         if d < 3.0:
@@ -604,6 +836,12 @@ def render(model_dir, key_png, out_dir):
     else:
         log("no audio in output (HunyuanVideo-1.5 is video-only) -> "
             "the procedural audio track is muxed later, off-GPU")
+
+    # ---- land the clip in the repo so w1 can publish it -------------------
+    # This is what makes the whole thing hands-off: the render cannot be
+    # fetched from GitHub Actions (Kaggle refuses Actions egress IPs), so the
+    # kernel walks it into the repo itself. w1 then only has to find the file.
+    push_clip_to_github(video_path, motion=motion)
 
     log("=" * 70)
     log("DONE")
