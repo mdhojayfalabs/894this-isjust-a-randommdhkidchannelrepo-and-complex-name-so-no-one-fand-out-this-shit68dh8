@@ -160,10 +160,38 @@ def skip_day():
     So: only advance when a package is actually waiting on the other side.
     Otherwise hold position and say so loudly, so the failure stays visible
     instead of silently walking off the end of the calendar.
+
+    AND only advance when there was something to publish in the first place.
+    The clamp above fixed the walk to 148, but it still advanced whenever the
+    NEXT day had a package - which is every day. So a day with no rendered
+    video at all was treated exactly like a day whose upload genuinely failed,
+    and next_day.txt walked 06 -> 17 in a single day, permanently burning
+    eleven of the fourteen calendar entries while only two videos had ever
+    been published (day04 and the deleted day05).
+
+    The two cases are completely different and must be told apart:
+
+      video present, upload failed  -> the clip exists and is worth retrying,
+                                       but this slot's attempts are spent.
+                                       Advance is correct.
+      no video at all               -> the render simply has not landed yet.
+                                       Advancing does not retry anything; it
+                                       silently skips a calendar day forever.
+                                       Hold, and say why.
     """
     day = read_state()
     nxt = int(day) + 1
     avail = available_days()
+
+    if not find_media(int(day)):
+        alert(f"SKIP day {day}: NO RENDERED VIDEO for day {day:02d} yet, so "
+              f"there is nothing to publish and nothing to retry. Holding at "
+              f"day {day} rather than advancing - advancing here does not "
+              f"retry anything, it just burns calendar day {nxt:02d} that we "
+              f"have not shot yet. The Kaggle render is still in flight; w1 "
+              f"will publish the moment the clip lands in videos/.")
+        return 0
+
     if avail and nxt not in avail:
         alert(f"SKIP day {day}: attempt cap reached, but NO package exists "
               f"for day {nxt:02d} (packages cover {avail[0]:02d}-{avail[-1]:02d}). "
@@ -171,8 +199,8 @@ def skip_day():
               f"is what drove the counter to 148.")
         return 0
     write_state(f"{nxt:02d}")
-    alert(f"SKIP day {day}: attempt cap reached, nothing published today. "
-          f"Advanced to day {nxt:02d}.")
+    alert(f"SKIP day {day}: upload attempts exhausted for a video that does "
+          f"exist. Advanced to day {nxt:02d}.")
     return 0
 
 
