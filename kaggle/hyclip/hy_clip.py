@@ -323,7 +323,7 @@ def render(model_dir, key_png, out_dir):
         except Exception as e:
             log(f"offload of text_encoder to cuda:1 failed: {e}")
 
-    for _cname in ("text_encoder_2", "image_encoder", "vae"):
+    for _cname in ("text_encoder_2", "image_encoder"):
         _comp = getattr(pipe, _cname, None)
         if isinstance(_comp, torch.nn.Module):
             try:
@@ -331,6 +331,41 @@ def render(model_dir, key_png, out_dir):
                 log(f"module-level offload: {_cname} -> cuda:0 (preload=MHA)")
             except Exception as e:
                 log(f"offload of {_cname} failed: {e}")
+
+    # ---- the VAE goes to GPU 1, not GPU 0 ---------------------------------
+    # v36 and v37 both died in the SAME place, with the SAME numbers:
+    #   autoencoder_kl_hunyuanvideo15.py:912 decoded = self.decoder(tile)
+    #   torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.54 GiB.
+    #   GPU 0 has a total capacity of 14.56 GiB of which 6.53 GiB is free.
+    # GPU 0 is carrying the transformer (6.49 GiB allocated after dispatch), so
+    # it has 6.53 GiB free and the decoder's single conv3d wants 8.54 GiB.
+    #
+    # v37 was *supposed* to move the VAE to cuda:1 and did not - the vae entry
+    # was still inside the _gpu0 loop above, so the log line read
+    #   module-level offload: vae -> cuda:0
+    # and the failure was byte-identical to v36's. The fix is to actually take
+    # vae out of that loop.
+    #
+    # Why GPU 1 can take it: the text encoder is the only other thing that ever
+    # sits on cuda:1, and it is evicted as soon as the prompt is encoded. GPU 1
+    # is then empty - v36 measured 0.00 GiB allocated for the entire 9.2 h
+    # render. The VAE weights are 5.04 GB and the decoder peak is ~8.5 GB, so
+    # ~13.5 GB against 14.56 GB of idle capacity, on a card that is doing
+    # nothing else.
+    _vae = getattr(pipe, "vae", None)
+    if isinstance(_vae, torch.nn.Module):
+        try:
+            cpu_offload(_vae, _gpu1, preload_module_classes=_preload)
+            log("module-level offload: vae -> cuda:1 (preload=MHA)")
+            log("    reason: GPU 0 holds the transformer (6.49 GiB) and the "
+                "decoder wants 8.54 GiB; GPU 1 is idle for the whole render")
+        except Exception as e:
+            log(f"offload of vae to cuda:1 failed: {e}")
+            try:
+                cpu_offload(_vae, _gpu0, preload_module_classes=_preload)
+                log("module-level offload: vae -> cuda:0 (fallback)")
+            except Exception as e2:
+                log(f"offload of vae failed entirely: {e2}")
 
     for _i in range(torch.cuda.device_count()):
         log(f"cuda:{_i} after offloads: "
