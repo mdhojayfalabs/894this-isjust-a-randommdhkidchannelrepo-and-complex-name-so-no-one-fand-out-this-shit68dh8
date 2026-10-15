@@ -75,4 +75,6 @@ jobs:
           git config user.email "svc-w8@users.noreply.github.com"
           git add longform/ state/ 2>/dev/null || true
           git diff --cached --quiet || git commit -m "longform: merge + upload"
-          git push
+          git fetch origin main
+          git rebase origin/main || { git rebase --abort; git merge origin/main -m "merge: runner state"; }
+          git push origin HEAD:main

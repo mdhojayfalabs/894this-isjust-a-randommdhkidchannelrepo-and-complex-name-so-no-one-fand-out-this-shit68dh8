@@ -38,4 +38,6 @@ jobs:
           git config user.email "svc-w@users.noreply.github.com"
           git add videos/ state/ 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: w4"
-          git push
+          git fetch origin main
+          git rebase origin/main || { git rebase --abort; git merge origin/main -m "merge: runner state"; }
+          git push origin HEAD:main
