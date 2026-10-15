@@ -92,7 +92,17 @@ def find_media(day):
     died with "WAIT day NN: media not found". Generation is now part of the
     publish path: build the clip, then upload it.
     """
-    files = sorted(glob.glob(os.path.join("videos", f"day_{day}*.mp4")))
+    # Zero-pad to two digits, always. read_state() returns "06" so the glob
+    # works on the happy path, but skip_day() coerces to int and passes 6,
+    # which globs day_6*.mp4 and silently matches nothing - so a clip that is
+    # sitting right there in videos/ is reported as missing. That is exactly
+    # how a real render gets ignored: the file exists, the glob misses it, and
+    # the pipeline waits forever.
+    try:
+        tag = f"{int(day):02d}"
+    except (TypeError, ValueError):
+        tag = str(day)
+    files = sorted(glob.glob(os.path.join("videos", f"day_{tag}*.mp4")))
     if files:
         return files[0]
     # not there yet - try to make it
@@ -178,28 +188,54 @@ def skip_day():
                                        Advancing does not retry anything; it
                                        silently skips a calendar day forever.
                                        Hold, and say why.
+
+    NOTE ON TYPES: read_state() returns a STRING. Formatting it with :02d
+    raises "ValueError: Unknown format code 'd' for object of type 'str'",
+    which is exactly what happened after the previous patch - w1 then crashed
+    on every single run instead of once a day. day is therefore coerced to int
+    here, once, and every format below uses that int.
     """
-    day = read_state()
-    nxt = int(day) + 1
+    day = int(read_state())
+    nxt = day + 1
     avail = available_days()
 
-    if not find_media(int(day)):
-        alert(f"SKIP day {day}: NO RENDERED VIDEO for day {day:02d} yet, so "
-              f"there is nothing to publish and nothing to retry. Holding at "
-              f"day {day} rather than advancing - advancing here does not "
-              f"retry anything, it just burns calendar day {nxt:02d} that we "
-              f"have not shot yet. The Kaggle render is still in flight; w1 "
-              f"will publish the moment the clip lands in videos/.")
+    if not find_media(day):
+        # A missing video is not an error and not a decision - it is just the
+        # render not having landed yet. Saying so on every 20-minute probe is
+        # 72 identical Telegram messages a day, which is spam. Say it once.
+        stamp = os.path.join("state", ".no_video_noticed")
+        today = dt.date.today().isoformat()
+        said = ""
+        try:
+            said = open(stamp).read().strip()
+        except Exception:
+            pass
+        if said != today:
+            try:
+                os.makedirs("state", exist_ok=True)
+                open(stamp, "w").write(today)
+            except Exception:
+                pass
+            alert(f"WAIT day {day:02d}: no rendered video yet, so there is "
+                  f"nothing to publish and nothing to retry. Holding at day "
+                  f"{day:02d} rather than advancing - advancing here does not "
+                  f"retry anything, it just burns calendar day {nxt:02d} that "
+                  f"we have not shot yet. The Kaggle render is still in "
+                  f"flight; w1 will publish the moment the clip lands in "
+                  f"videos/. (This message is sent once a day.)")
+        else:
+            print(f"still waiting for videos/day_{day:02d}.mp4 "
+                  f"(already reported today)", flush=True)
         return 0
 
     if avail and nxt not in avail:
-        alert(f"SKIP day {day}: attempt cap reached, but NO package exists "
+        alert(f"SKIP day {day:02d}: attempt cap reached, but NO package exists "
               f"for day {nxt:02d} (packages cover {avail[0]:02d}-{avail[-1]:02d}). "
-              f"Holding at day {day} instead of advancing - advancing blindly "
+              f"Holding at day {day:02d} instead of advancing - advancing blindly "
               f"is what drove the counter to 148.")
         return 0
     write_state(f"{nxt:02d}")
-    alert(f"SKIP day {day}: upload attempts exhausted for a video that does "
+    alert(f"SKIP day {day:02d}: upload attempts exhausted for a video that does "
           f"exist. Advanced to day {nxt:02d}.")
     return 0
 
