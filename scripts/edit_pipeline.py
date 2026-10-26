@@ -342,11 +342,18 @@ def build_short(src, day, rng, out_dir, seconds=42):
     if music.exists():
         cmd += ["-i", str(music)]
     cmd += ["-filter_complex", full, "-map", "[vout]"]
+    # Count inputs by position, not by list length. `inputs` holds six list
+    # elements per card (-loop 1 -t 3.2 -i <path>) plus two for the segment, so
+    # len(inputs) // 2 is meaningless and produced index 16 for a six-input
+    # graph - "Invalid input file index: 16". The real order is
+    #   0 = segment, 1..N = cards, N+1 = voice, N+2 = music
+    n_card_inputs = len(cards)
+    i_voice = 1 + n_card_inputs
+    i_music = i_voice + (1 if has_voice else 0)
     if has_voice:
-        cmd += ["-map", f"{len(inputs) // 2}:a"]
+        cmd += ["-map", f"{i_voice}:a"]
     if music.exists():
-        idx = (len(inputs) // 2) + (1 if has_voice else 0)
-        cmd += ["-map", f"{idx}:a"]
+        cmd += ["-map", f"{i_music}:a"]
     cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
             "-shortest", "-movflags", "+faststart", str(out)]
@@ -432,20 +439,31 @@ def _music_bed(path, seconds, rng):
 def measure_motion(path):
     """Mean frame-to-frame difference. A still with a pan measures ~1.6/255;
     real motion measures 5-20. Anything under 3.0 is refused."""
+    # OpenCV, not imageio: imageio needs the pyav plugin to read video, which is
+    # not installed, and the day_05 guardrail must not silently no-op. opencv
+    # is already in requirements.txt.
     try:
+        import cv2
         import numpy as np
-        import imageio.v3 as iio
     except Exception as e:
         log(f"cannot measure motion: {e}")
         return None
     try:
+        cap = cv2.VideoCapture(str(path))
         frames = []
-        for i, fr in enumerate(iio.imiter(str(path), plugin="pyav")):
-            if i % 5:
-                continue
-            frames.append(np.asarray(fr[::4, ::4, :3], dtype="float32").mean(2))
-            if len(frames) > 90:
+        idx = 0
+        while len(frames) < 120:
+            ok, fr = cap.read()
+            if not ok:
                 break
+            idx += 1
+            if idx % 4:          # every 4th frame; a separate counter, because
+                continue         # testing len(frames) never advances and spins
+            if fr is None or fr.size == 0:
+                continue
+            small = cv2.resize(fr, (fr.shape[1] // 4, fr.shape[0] // 4))
+            frames.append(small.astype("float32").mean(2))
+        cap.release()
         if len(frames) < 2:
             return None
         a = np.stack(frames)
