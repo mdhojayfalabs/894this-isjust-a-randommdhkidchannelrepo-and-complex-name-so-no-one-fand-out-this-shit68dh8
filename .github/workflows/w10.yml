@@ -81,6 +81,11 @@ jobs:
           PY
           mkdir -p videos
           cp "$SRC" "videos/day_${D}.mp4"
+          # .gitignore ignores videos/*.mp4 (the day_05 incident: a collage was
+          # force-committed past it once and had to be deleted from YouTube and
+          # from git). This clip is not that - it measured real motion above the
+          # 3.0/255 floor one step ago - so it is added explicitly and by name.
+          git add -f "videos/day_${D}.mp4"
           git config user.name "svc-w10"
           git config user.email "svc-w10@users.noreply.github.com"
           git add videos/ state/ sources/ build/editpipe/*.json 2>/dev/null || true
