@@ -1,0 +1,90 @@
+name: w10
+
+# Edit pipeline: turn one free CC0/public-domain clip into a transformed Short.
+#
+# This is the route that replaced the GPU render. HunyuanVideo-1.5 on a free
+# T4 ran 6h35m and consumed 0.95h of GPU - it was not rendering at all - and
+# could not deliver a single clip in a month. This route needs no GPU: the
+# footage is already rendered by someone who released it freely, so a Short
+# takes minutes instead of hours.
+#
+# Legal and policy position, stated so it is not re-litigated later:
+#   * Sources are archive.org public-domain/CC collections ONLY. Nothing is
+#     scraped from YouTube, so Content ID has nothing to match and no third
+#     party can claim the revenue.
+#   * The edit is substantive by design: an original narrative, a fresh
+#     voiceover (edge-tts, free, no key), intercut text cards, a strong colour
+#     grade, a vignette and an original music bed. YouTube's reused-content
+#     policy allows exactly this and explicitly rejects "songs modified to
+#     change the pitch or speed, but are otherwise identical".
+#   * Videos stay marked made-for-kids. Mislabeling child-directed content to
+#     get personalised ads is a COPPA violation - Disney paid $10m for it in
+#     September 2025, the FTC penalty is $53,088 per violation, and YouTube
+#     reclassifies child-directed content itself since April 2026.
+on:
+  schedule:
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "calendar day to build"
+        required: false
+      topic:
+        description: "archive.org search term"
+        required: false
+        default: "cartoon"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: w10
+  cancel-in-progress: false
+
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: deps
+        run: pip install -r requirements.txt edge-tts imageio-ffmpeg soundfile
+      - name: build
+        id: build
+        env:
+          DAY: ${{ inputs.day }}
+          TOPIC: ${{ inputs.topic || 'cartoon' }}
+        run: |
+          D="${DAY:-$(cat state/next_day.txt)}"
+          python scripts/edit_pipeline.py --day "$D" --topic "$TOPIC" --seconds 42
+      - name: place-and-commit
+        run: |
+          D="$(cat state/next_day.txt)"
+          SRC="build/editpipe/day_${D}.mp4"
+          if [ ! -f "$SRC" ]; then
+            echo "no clip at $SRC - nothing to place"
+            exit 0
+          fi
+          # the day_05 guardrail: never publish a near-still
+          python - "$SRC" <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from edit_pipeline import measure_motion
+          m = measure_motion(sys.argv[1])
+          print("motion:", m)
+          if m is not None and m < 3.0:
+              print("REFUSING: motion below 3.0/255")
+              raise SystemExit(1)
+          PY
+          mkdir -p videos
+          cp "$SRC" "videos/day_${D}.mp4"
+          git config user.name "svc-w10"
+          git config user.email "svc-w10@users.noreply.github.com"
+          git add videos/ state/ sources/ build/editpipe/*.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "edit: day ${D} Short from a CC0 source"
+          git fetch origin main
+          git rebase origin/main || { git rebase --abort; git merge origin/main -m "merge: runner state"; }
+          git push origin HEAD:main

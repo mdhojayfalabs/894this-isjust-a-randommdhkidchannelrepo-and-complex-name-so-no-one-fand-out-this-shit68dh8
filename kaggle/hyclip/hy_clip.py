@@ -637,12 +637,81 @@ def render(model_dir, key_png, out_dir):
             if _m:
                 log(f"{_name}: {_m} META tensors (offloaded, loaded on demand)")
 
-    for fn in ("enable_tiling", "enable_slicing"):
+    # ---- VAE tiling: the tile size is the whole ballgame -------------------
+    # v36 died here on GPU 0 with an 8.54 GiB allocation. v39 moved the VAE to
+    # cuda:1, which fixed the device, but the decode still wanted 17.09 GiB
+    # against 11.79 GiB free:
+    #
+    #   torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 17.09 GiB.
+    #   GPU 1 has a total capacity of 14.56 GiB of which 11.79 GiB is free.
+    #
+    # The default tile is tile_sample_min 256x256, i.e. a 16x16 latent tile,
+    # which the decoder blows up to 256x256 pixels across four upsampling
+    # stages. The conv3d workspaces along that path are what want 17 GiB.
+    #
+    # AutoencoderKLHunyuanVideo15.enable_tiling() takes explicit tile sizes, so
+    # the tile can simply be made smaller. A 128x128 sample tile is an 8x8
+    # latent tile, which decodes to 128x128 - half the linear extent, a quarter
+    # of the area, and therefore roughly a quarter of the workspace. That is
+    # ~4.3 GiB against 11.79 GiB free, and it costs nothing but more tiles
+    # (the decoder runs 45 times instead of 8, on tensors small enough that it
+    # is still faster than the 21-minute-per-step transformer).
+    #
+    # 64x64 is kept as a second, smaller fallback in case 128 is still too big.
+    for _tsz in (128, 64):
+        try:
+            pipe.vae.enable_tiling(
+                tile_sample_min_height=_tsz,
+                tile_sample_min_width=_tsz,
+                tile_overlap_factor=0.25)
+            log(f"vae enable_tiling enabled (tile {_tsz}x{_tsz} sample = "
+                f"{_tsz // 16}x{_tsz // 16} latent)")
+            break
+        except Exception as e:
+            log(f"enable_tiling({_tsz}) failed: {e}")
+
+    for fn in ("enable_slicing",):
         try:
             getattr(pipe.vae, fn)()
             log(f"vae {fn} enabled")
         except Exception:
             pass
+
+    # ---- tiling must apply to the DECODE only ------------------------------
+    # v40 crashed inside the denoise loop with:
+    #
+    #   RuntimeError: Sizes of tensors must match except in dimension 1.
+    #   Expected size 52 but got size 68 for tensor number 1 in the list.
+    #   pipeline_hunyuan_video1_5_image2video.py:851
+    #
+    # 52 is the latent width of the 480x848 render target (848 / 16 = 53, and
+    # the pipeline pads to 52). 68 is what tiled_encode produced instead. The
+    # i2v pipeline encodes the key frame into image latents and concatenates
+    # them with the noise latents; because enable_tiling() turns on tiling for
+    # BOTH directions, the encoder was tiled at 128 too, and tiled_encode
+    # rebuilds the latent by concatenating tiles - 9 tiles of 8 latent columns
+    # with overlap - which does not round-trip back to 53. The concatenation
+    # then fails on dimension 1.
+    #
+    # The decode is the only place that needs tiling: it is the part that wants
+    # 17 GiB. The encode runs once, on one key frame, and is cheap. So tiling
+    # is switched off around the encode and left on for the decode.
+    _vae_cls = type(pipe.vae)
+    if not getattr(_vae_cls, "_mdh_encode_untiled", False):
+        _orig_encode = _vae_cls._encode
+
+        def _encode_untiled(self, x, *a, **k):
+            _was = self.use_tiling
+            self.use_tiling = False
+            try:
+                return _orig_encode(self, x, *a, **k)
+            finally:
+                self.use_tiling = _was
+
+        _vae_cls._encode = _encode_untiled
+        _vae_cls._mdh_encode_untiled = True
+        log("vae: tiling disabled for _encode (v40 shape fix), "
+            "kept for the decode")
 
     gc.collect()
     if torch.cuda.is_available():
