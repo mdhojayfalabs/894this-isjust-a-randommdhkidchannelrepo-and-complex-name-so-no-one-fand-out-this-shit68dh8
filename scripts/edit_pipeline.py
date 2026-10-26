@@ -313,25 +313,21 @@ def build_short(src, day, rng, out_dir, seconds=42):
     inputs = ["-i", str(seg)]
     for c in cards:
         inputs += ["-loop", "1", "-t", "3.2", "-i", str(c)]
-    fc = []
-    fc.append("[0:v]" + ",".join(vf) + "[base]")
+    # drawtext is NOT in the imageio-ffmpeg static build (it needs freetype),
+    # which is what broke the first live run with "Filter not found". The cards
+    # are already rendered to PNG by PIL, so overlay them instead - overlay is
+    # in every build and needs no font support at all.
+    lines = _wrap(script, 5)[:5]
+    fg = [f"[0:v]{','.join(vf)}[base]"]
+    prev = "base"
     for i in range(len(cards)):
-        fc.append(f"[{i + 1}:v]scale=900:-1,format=rgba[c{i}]")
-        fc.append(f"[base][c{i}]overlay=(W-w)/2:H*0.16:enable="
-                  f"'between(t,{6 + i * 7}, {6 + i * 7 + 3.2})'"
-                  + (f"[base]" if i < len(cards) - 1 else "[v1]")
-                  if False else "")
-    # keep it simple and robust: draw the cards with drawtext over the graded
-    # base, which avoids filter-graph loops that are easy to get wrong.
-    draw = []
-    for i, line in enumerate(_wrap(script, 5)[:5]):
-        safe = line.replace(":", "\\:").replace("'", "")
-        draw.append(
-            f"drawtext=text='{safe}':fontsize=54:fontcolor=white:"
-            f"borderw=3:bordercolor=black@0.75:"
-            f"x=(w-text_w)/2:y=h*0.14:enable='between(t,{6 + i * 7},"
-            f"{6 + i * 7 + 3.2})'")
-    full = "[0:v]" + ",".join(vf + draw) + "[vout]"
+        fg.append(f"[{i + 1}:v]scale=920:-1,format=rgba[c{i}]")
+        t0, t1 = 6 + i * 7, 6 + i * 7 + 3.2
+        out_label = f"v{i + 1}" if i < len(cards) - 1 else "vout"
+        fg.append(f"[{prev}][c{i}]overlay=(W-w)/2:H*0.15:"
+                  f"enable='between(t,{t0},{t1})'[{out_label}]")
+        prev = out_label
+    full = ";".join(fg)
 
     voice = tmp / "voice.wav"
     has_voice = synth_voice(script, voice)
