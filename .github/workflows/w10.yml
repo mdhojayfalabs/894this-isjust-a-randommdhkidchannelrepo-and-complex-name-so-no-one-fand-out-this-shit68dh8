@@ -30,9 +30,13 @@ on:
         description: "calendar day to build"
         required: false
       topic:
-        description: "archive.org search term"
+        description: "search term"
         required: false
-        default: "cartoon"
+        default: "nature documentary"
+      source:
+        description: "youtube | archive | auto"
+        required: false
+        default: "youtube"
 
 permissions:
   contents: write
@@ -51,15 +55,16 @@ jobs:
         with:
           python-version: "3.12"
       - name: deps
-        run: pip install -r requirements.txt edge-tts imageio-ffmpeg soundfile
+        run: pip install -r requirements.txt edge-tts imageio-ffmpeg soundfile yt-dlp
       - name: build
         id: build
         env:
           DAY: ${{ inputs.day }}
-          TOPIC: ${{ inputs.topic || 'cartoon' }}
+          TOPIC: ${{ inputs.topic || 'nature documentary' }}
+          SOURCE: ${{ inputs.source || 'youtube' }}
         run: |
           D="${DAY:-$(cat state/next_day.txt)}"
-          python scripts/edit_pipeline.py --day "$D" --topic "$TOPIC" --seconds 42
+          python scripts/edit_pipeline.py --day "$D" --topic "$TOPIC" --seconds 42 --source "$SOURCE"
       - name: place-and-commit
         run: |
           D="$(cat state/next_day.txt)"
