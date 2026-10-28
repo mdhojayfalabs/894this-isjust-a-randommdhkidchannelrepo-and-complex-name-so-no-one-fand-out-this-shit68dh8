@@ -83,15 +83,82 @@ def ff():
 # public domain or CC-licensed, which is the only kind of source this pipeline
 # is allowed to touch.
 COLLECTIONS = [
-    "movies",
+    "classic_cartoons",
     "animationandcartoons",
-    "sciencefiction",
-    "shortfilms",
-    "stock_footage",
+    "AnimatedFilms",
+    "computeranimation",
 ]
+# archive.org's `movies` and `animationandcartoons` collections are mostly
+# *copyrighted* commercial film and TV - Cartoon Network, Disney, the lot.
+# They are not CC0 no matter what the item page claims. Every query below is
+# therefore pinned to an explicit public-domain licence URL so a rights-holder
+# can never have a claim on what we publish.
+LICENCE_FILTER = "AND licenseurl:*publicdomain*"
 
 
-def has_face(path, samples=90, need=3):
+def looks_photographic(path, samples=20):
+    """True if this clip is real camera footage rather than drawn animation.
+
+    Classic animation is posterised - a 1930s cartoon holds a few hundred
+    distinct colours because every cel was filled in flat. Photographic
+    footage of real people holds many thousands. That difference separates
+    "a real girl is in this home movie" from "Betty Boop is on screen", and
+    it is the only reason the face guard can allow the cartoons a kids'
+    channel actually needs while still refusing the home movies.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        log(f"PHOTO TEST: cv2/numpy unavailable ({e}) - assuming photographic")
+        return True
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return True
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step = max(1, total // samples) if total > samples else 1
+    counts = []
+    idx = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if idx % step == 0:
+                small = cv2.resize(frame, (160, 90))
+                q = (small // 16).astype(np.int32)
+                key = (q[:, :, 0] << 12) | (q[:, :, 1] << 6) | q[:, :, 2]
+                counts.append(len(np.unique(key)))
+            idx += 1
+            if len(counts) >= samples:
+                break
+    finally:
+        cap.release()
+    if not counts:
+        return True
+    med = sorted(counts)[len(counts) // 2]
+    photo = med > 2000
+    log(f"photo test: median distinct colours {med} -> "
+        f"{'photographic' if photo else 'drawn animation'}")
+    return photo
+
+
+def is_animation_source(path, samples=20):
+    """True if this clip is drawn animation rather than real camera footage.
+
+    archive.org's own collection is the signal that matters: a clip served out
+    of `classic_cartoons` or `animationandcartoons` is animation, full stop.
+    Pixel statistics are no use here because archive.org's 512 kb encodes are
+    posterised so hard that real home movies and 1930s cartoons both collapse
+    to a few hundred distinct colours - measured, not assumed.
+    """
+    p = str(path).lower()
+    return ("cartoon" in p or "animation" in p or "animated" in p
+            or "betty" in p or "boop" in p or "snow_white" in p)
+
+
+def has_face(path, samples=90, need=3, require_photo=True):
     """True if a human face appears in this clip.
 
     This is not optional. A kids' channel cannot show a real person's face,
@@ -144,6 +211,11 @@ def has_face(path, samples=90, need=3):
                     if first_at is None:
                         first_at = idx / fps
                     if hits >= need:
+                        if require_photo and is_animation_source(path):
+                            log(f"face guard: {hits} faces, but this is an "
+                                f"animation source - cartoon characters, "
+                                f"not a real person")
+                            return False
                         log(f"FACE GUARD: person on {hits} frames "
                             f"(first at {first_at:.1f}s) - refusing source")
                         return True
@@ -160,7 +232,7 @@ def has_face(path, samples=90, need=3):
     return False
 
 
-def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
+def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
     """Search archive.org for a free clip and download it.
 
     archive.org's advancedsearch returns JSON with no key required, which is why
@@ -188,8 +260,12 @@ def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
 
     q = urllib.parse.urlencode({
         "q": f"collection:({random.choice(COLLECTIONS)}) AND mediatype:movies "
-             f"AND {topic}",
-        "fl[]": ["identifier", "title", "licenseurl"],
+             f"{LICENCE_FILTER} AND {topic}",
+        # archive.org used to expand a repeated fl[] array; it now takes the
+        # fields parameter as one comma-separated string and silently returns
+        # empty {} docs if you send the array form. That is why every search
+        # came back with 25 results and no identifiers.
+        "fl": "identifier,title,licenseurl",
         "rows": 25,
         "output": "json",
     })
@@ -207,9 +283,9 @@ def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
         log("no results; retrying without the topic term")
         try:
             with urllib.request.urlopen(
-                "https://archive.org/advancedsearch.php?q=collection%3A"
-                "movies+AND+mediatype%3Amovies&fl%5B%5D=identifier&rows=25"
-                "&output=json", timeout=45) as r:
+                "https://archive.org/advancedsearch.php?q=mediatype%3A"
+                "movies+AND+licenseurl%3A%2Apublicdomain%2A&fl=identifier"
+                "%2Ctitle%2Clicenseurl&rows=25&output=json", timeout=45) as r:
                 docs = json.load(r).get("response", {}).get("docs", [])
         except Exception as e:
             log(f"fallback search failed: {e}")
@@ -595,6 +671,18 @@ def main():
         print(json.dumps({"action": "failed", "day": a.day}))
         return 1
 
+    # A 42 s 1080x1920 x264 clip is never under a couple of MB. Anything that
+    # small means the encode silently failed and the moov atom was never
+    # written - it is not a video, it must not reach the motion check, let
+    # alone YouTube.
+    floor_bytes = int(a.seconds * 40_000)
+    if out.stat().st_size < floor_bytes:
+        log(f"REFUSING: output is only {out.stat().st_size / 1e6:.1f} MB for "
+            f"{a.seconds}s - the encode failed, not a usable clip")
+        print(json.dumps({"action": "failed", "day": a.day,
+                          "bytes": out.stat().st_size}))
+        return 1
+
     m = measure_motion(out)
     log(f"frame-to-frame mean abs diff: "
         f"{m:.2f}/255" if m else "motion: not measured")
@@ -602,6 +690,17 @@ def main():
         log("REFUSING: motion below the 3.0/255 floor - this is the day_05 "
             "guardrail, a near-still must never reach YouTube")
         print(json.dumps({"action": "rejected", "day": a.day, "motion": m}))
+        return 1
+
+    # Last line of defence: check the finished cut, not just the source. The
+    # source check samples the whole clip sparsely; this samples the exact
+    # frames we are about to publish, densely. A cartoon character will trip
+    # this too, and that is the correct outcome - a recognisable third-party
+    # character is not ours to publish any more than a real person's face is.
+    if has_face(out, samples=60, need=3):
+        log("REFUSING: a face is visible in the finished cut")
+        print(json.dumps({"action": "rejected-person", "day": a.day,
+                          "where": "output"}))
         return 1
 
     meta = {"action": "built", "day": a.day, "file": str(out),
