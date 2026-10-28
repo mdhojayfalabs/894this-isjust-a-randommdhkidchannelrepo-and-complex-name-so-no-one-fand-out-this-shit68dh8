@@ -91,6 +91,75 @@ COLLECTIONS = [
 ]
 
 
+def has_face(path, samples=90, need=3):
+    """True if a human face appears in this clip.
+
+    This is not optional. A kids' channel cannot show a real person's face,
+    and archive.org's public-domain collections are full of home movies of
+    strangers' children. Haar cascades ship with opencv, so this costs one
+    import and no download.
+
+    Two deliberate guards against crying wolf:
+      * a face must be seen on `need` separate sampled frames, not once, so a
+        coincidental pattern in one frame cannot kill a good source;
+      * fail closed - if the cascade cannot be loaded we refuse the source
+        rather than gamble on it.
+    """
+    try:
+        import cv2
+        cas = cv2.CascadeClassifier(
+            os.path.join(cv2.data.haarcascades,
+                         "haarcascade_frontalface_default.xml"))
+        if cas.empty():
+            log("FACE GUARD: cascade failed to load - refusing source")
+            return True
+    except Exception as e:
+        log(f"FACE GUARD: cv2 unavailable ({e}) - refusing source")
+        return True
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        log("FACE GUARD: cannot open clip - refusing source")
+        return True
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step = max(1, total // samples) if total > samples else 1
+    seen = 0
+    idx = 0
+    hits = 0
+    first_at = None
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if idx % step == 0:
+                seen += 1
+                h, w = frame.shape[:2]
+                g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                g = cv2.resize(g, (480, int(480 * h / max(1, w))))
+                found = cas.detectMultiScale(g, 1.1, 7, minSize=(32, 32))
+                if len(found):
+                    hits += 1
+                    if first_at is None:
+                        first_at = idx / fps
+                    if hits >= need:
+                        log(f"FACE GUARD: person on {hits} frames "
+                            f"(first at {first_at:.1f}s) - refusing source")
+                        return True
+            idx += 1
+            if seen >= samples:
+                break
+    finally:
+        cap.release()
+    if hits:
+        log(f"face guard: {hits} lone hit(s) over {seen} frames - "
+            f"below the {need}-frame threshold, source accepted")
+    else:
+        log(f"face guard: clean over {seen} sampled frames")
+    return False
+
+
 def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
     """Search archive.org for a free clip and download it.
 
@@ -101,10 +170,21 @@ def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cached = sorted(out_dir.glob("*.mp4"))
-    if cached:
-        log(f"reusing cached source {cached[0].name} "
-            f"({cached[0].stat().st_size / 1e6:.1f} MB)")
-        return cached[0]
+    for c in cached:
+        # A cached source is not automatically safe - it was cached before the
+        # face guard existed, and that is exactly how day_06 got a stranger's
+        # child in it. Re-check every cached clip before reusing it.
+        if has_face(c):
+            log(f"dropping cached source {c.name}: contains a person")
+            try:
+                c.unlink()
+                (out_dir / f"{c.stem}.json").unlink(missing_ok=True)
+            except OSError:
+                pass
+            continue
+        log(f"reusing cached source {c.name} "
+            f"({c.stat().st_size / 1e6:.1f} MB)")
+        return c
 
     q = urllib.parse.urlencode({
         "q": f"collection:({random.choice(COLLECTIONS)}) AND mediatype:movies "
@@ -165,6 +245,13 @@ def fetch_cc0(topic, out_dir, max_bytes=400 * 1024 * 1024):
             f"({int(files[0]['size']) / 1e6:.1f} MB)")
         r = sh(["curl", "-sL", "--max-time", "600", "-o", str(dest), dl])
         if dest.exists() and dest.stat().st_size > 1024 * 1024:
+            if has_face(dest):
+                log(f"dropping {ident}: a real person is in the footage")
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                continue
             log(f"saved {dest.name} ({dest.stat().st_size / 1e6:.1f} MB)")
             (out_dir / f"{ident}.json").write_text(json.dumps(
                 {"identifier": ident, "title": doc.get("title", ""),
@@ -486,6 +573,16 @@ def main():
     if not src:
         log("no CC0 source available; nothing built")
         print(json.dumps({"action": "no-source", "day": a.day}))
+        return 1
+
+    # Second, independent face check on the exact clip we are about to cut.
+    # The first one is in fetch_cc0; this is the one that must never be
+    # bypassed, because it runs after every other decision has been made.
+    if has_face(src):
+        log("REFUSING: a real person is in the source footage. A kids' "
+            "channel does not show strangers' faces.")
+        print(json.dumps({"action": "rejected-person", "day": a.day,
+                          "source": src.name}))
         return 1
 
     if a.dry_run:
