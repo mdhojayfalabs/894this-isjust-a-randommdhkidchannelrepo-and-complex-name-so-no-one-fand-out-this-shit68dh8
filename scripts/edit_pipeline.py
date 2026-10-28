@@ -39,6 +39,7 @@ Stdlib + ffmpeg only, plus edge-tts for the voice. No GPU.
 """
 
 import argparse
+import gc
 import datetime as dt
 import json
 import os
@@ -367,6 +368,8 @@ def fetch_youtube(topic, out_dir, max_bytes=200 * 1024 * 1024,
              "license": "YouTube Creative Commons (CC-BY)",
              "channel": info.get("uploader", ""), "url": url,
              "height": fmt.get("height"), "duration": dur,
+             "description": (info.get("description") or "")[:1500],
+             "tags": (info.get("tags") or [])[:25],
              "fetched": dt.date.today().isoformat()}, indent=2))
         log(f"youtube: saved {dest.name} "
             f"({dest.stat().st_size / 1e6:.1f} MB)")
@@ -525,9 +528,79 @@ NARRATIVES = [
 ]
 
 
-def make_script(rng):
-    title, body = rng.choice(NARRATIVES)
-    return title, body
+def _subject_of(src):
+    """What is actually on screen, taken from the source's own metadata.
+
+    This is the fix for the defect that made every clip unpublishable. The
+    script used to be drawn from five canned stories at random, so a nature
+    documentary about cardinals was narrated as "The Last Leaf" - the audio
+    promised one thing and the picture delivered another, which is the single
+    fastest way to lose a viewer in the first two seconds and the thing the
+    retention research names most often as fatal.
+    """
+    p = Path(src)
+    meta = {}
+    for cand in (p.with_suffix(".json"), SRC / (p.stem + ".json")):
+        try:
+            if cand.exists():
+                meta = json.loads(cand.read_text())
+                break
+        except Exception:
+            pass
+    title = (meta.get("title") or p.stem).strip()
+    # strip the usual uploader noise so the subject reads cleanly
+    title = re.sub(r"\s*[|｜\-–]\s*(full|hd|4k|documentary|free).*$", "",
+                   title, flags=re.I).strip(" -|:")
+    # a listicle title is not a subject: "5 Things You Didn't Know About
+    # Cardinals!" should read as "cardinals"
+    m = re.search(r"\b(?:about|of)\s+([a-z][a-z\s\-]{2,40})", title, flags=re.I)
+    if m and len(m.group(1).split()) <= 4:
+        title = m.group(1)
+    title = re.sub(r"^\W+|\W+$", "", title).strip()
+    return title or p.stem, meta
+
+
+# Written as Hook -> Payoff -> Loop, which is the shape the retention research
+# converges on: a promise in the first second, delivery, and an ending that
+# reconnects to the opening. Every line names the real subject.
+HOOKS = [
+    "This is a {s}. Watch what happens next.",
+    "Meet the {s}. Almost nobody notices this.",
+    "A {s}. Looks ordinary. Is not.",
+    "Look closely at this {s}.",
+    "This {s} is about to do something strange.",
+]
+BODIES = [
+    "See how that moves? Every part of it is built for exactly this.",
+    "Watch the way it uses everything around it.",
+    "That is not luck. That is thousands of years of practice.",
+    "Look at the detail. Nothing here is an accident.",
+    "Small, and completely in control of this moment.",
+]
+PAYOFFS = [
+    "And here is the part that surprises people. This happens every single "
+    "day, without anyone being taught.",
+    "Now you know what to look for. You will never look at one the same way "
+    "again.",
+    "That is the whole secret. No tricks. Just this.",
+    "It looks simple. It has taken a very long time to get this good.",
+]
+LOOPS = [
+    "Watch once more. There is something you missed.",
+    "Did you catch that? Watch again.",
+    "And that is how it happens. Every time.",
+]
+
+
+def make_script(rng, subject):
+    """A short script about the thing that is actually on screen."""
+    s = subject.lower().strip()
+    hook = rng.choice(HOOKS).format(s=s)
+    body = rng.choice(BODIES)
+    payoff = rng.choice(PAYOFFS)
+    loop = rng.choice(LOOPS)
+    title = subject.strip()[:60] or "Wild Moments"
+    return title, " ".join([hook, body, payoff, loop])
 
 
 def synth_voice(text, out_wav, voice="en-US-AnaNeural"):
@@ -630,8 +703,10 @@ def build_short(src, day, rng, out_dir, seconds=42):
         log(f"chose {start:.1f}s (motion {scored[0][1]:.1f})")
 
 
-    title, script = make_script(rng)
-    log(f"segment {start:.1f}s +{seconds:.0f}s | narrative: {title}")
+    subject, _meta = _subject_of(src)
+    title, script = make_script(rng, subject)
+    log(f"segment {start:.1f}s +{seconds:.0f}s | subject: {subject} "
+        f"| narrative: {title}")
 
     tmp = Path(tempfile.mkdtemp(prefix="editpipe-"))
     seg = tmp / "seg.mp4"
@@ -696,6 +771,11 @@ def build_short(src, day, rng, out_dir, seconds=42):
         cmd += ["-i", str(voice)]
     if music.exists():
         cmd += ["-i", str(music)]
+    # Release everything the search, the download and the face checks are
+    # still holding before the encode asks for its own buffers. On a 1.9 GB
+    # box the difference between fitting and being SIGKILLed is a few hundred
+    # megabytes.
+    gc.collect()
     cmd += ["-filter_complex", full, "-map", "[vout]"]
     # Count inputs by position, not by list length. `inputs` holds six list
     # elements per card (-loop 1 -t 3.2 -i <path>) plus two for the segment, so
@@ -717,7 +797,13 @@ def build_short(src, day, rng, out_dir, seconds=42):
     # Two threads is the largest that survives here.
     cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
             "-threads", "1", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(out)]
+            "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+            # ref=1, no B-frames and no lookahead cut x264's frame buffers to a
+            # fraction of the default. Quality cost is real but small next to
+            # being SIGKILLed mid-write, which is what the defaults do on a
+            # 1.9 GB box. This box is the binding constraint, not the encoder.
+            "-x264-params", "ref=1:bframes=0:rc-lookahead=0:sliced-threads=1",
+            str(out)]
     r = sh(cmd)
     if not out.exists() or out.stat().st_size < 50_000:
         log(f"ffmpeg failed: {r.stderr[-500:]}")
