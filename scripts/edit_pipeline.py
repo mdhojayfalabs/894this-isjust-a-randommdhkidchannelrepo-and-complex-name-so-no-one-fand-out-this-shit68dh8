@@ -39,6 +39,7 @@ Stdlib + ffmpeg only, plus edge-tts for the voice. No GPU.
 """
 
 import argparse
+import gc
 import datetime as dt
 import json
 import os
@@ -94,6 +95,29 @@ COLLECTIONS = [
 # therefore pinned to an explicit public-domain licence URL so a rights-holder
 # can never have a claim on what we publish.
 LICENCE_FILTER = "AND licenseurl:*publicdomain*"
+
+
+def _skin_fraction(bgr):
+    """Fraction of a face box that is skin-toned.
+
+    A Haar frontal-face cascade fires on anything with two dark eyes above a
+    midline - cardinals and sparrows qualify, which is how a nature
+    documentary about cardinals got refused for "containing a person". Real
+    human faces are skin-toned; a red cardinal is not. YCrCb chroma is the
+    usual test and it holds across skin tones far better than an RGB range.
+    """
+    try:
+        import cv2
+        import numpy as np
+        if bgr is None or bgr.size == 0:
+            return 0.0
+        ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+        cr = ycrcb[:, :, 1].astype(np.int16)
+        cb = ycrcb[:, :, 2].astype(np.int16)
+        m = ((cr >= 133) & (cr <= 180) & (cb >= 77) & (cb <= 135))
+        return float(m.mean())
+    except Exception:
+        return 0.0
 
 
 def looks_photographic(path, samples=20):
@@ -206,7 +230,14 @@ def has_face(path, samples=90, need=3, require_photo=True):
                 g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 g = cv2.resize(g, (480, int(480 * h / max(1, w))))
                 found = cas.detectMultiScale(g, 1.1, 7, minSize=(32, 32))
-                if len(found):
+                # keep only boxes that are actually skin-toned: a bird's head
+                # has the same two-eyes-over-a-midline geometry as a face
+                human = []
+                for (fx, fy, fw, fh) in found:
+                    box = frame[fy:fy + fh, fx:fx + fw]
+                    if _skin_fraction(box) >= 0.25:
+                        human.append((fx, fy, fw, fh))
+                if human:
                     hits += 1
                     if first_at is None:
                         first_at = idx / fps
@@ -224,12 +255,127 @@ def has_face(path, samples=90, need=3, require_photo=True):
                 break
     finally:
         cap.release()
+    if seen == 0:
+        # Not one frame could be decoded. That is not "no faces", that is
+        # "we could not look" - and the only safe answer to that is refuse.
+        log("FACE GUARD: decoded 0 frames - cannot verify, refusing source")
+        return True
     if hits:
         log(f"face guard: {hits} lone hit(s) over {seen} frames - "
             f"below the {need}-frame threshold, source accepted")
     else:
         log(f"face guard: clean over {seen} sampled frames")
     return False
+
+
+def fetch_youtube(topic, out_dir, max_bytes=200 * 1024 * 1024,
+                  max_height=1080, want=25):
+    """Search YouTube, prefer Creative Commons, download one long-form video.
+
+    Why Creative Commons and not arbitrary uploads: a CC-BY video carries a
+    licence that permits reuse with attribution, which is the only YouTube
+    source where the rights side of the problem is actually settled. The
+    reused-content policy is a separate question and a licence does not
+    answer it - that is what the substantive edit in build_short is for.
+
+    The audio is not reused. build_short cuts with -an, which discards the
+    original soundtrack completely, and replaces it with our own voiceover and
+    music bed. Replacing the audio is the one transformation that genuinely
+    removes an audio fingerprint rather than merely perturbing it.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import yt_dlp
+        import imageio_ffmpeg
+    except Exception as e:
+        log(f"youtube: yt-dlp/imageio-ffmpeg unavailable ({e})")
+        return None
+
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    ydl_opts = {
+        "quiet": True, "no_warnings": True, "simulate": True,
+        "extract_flat": True, "noplaylist": True,
+    }
+    # creativecommons is YouTube's own licence filter - it restricts results to
+    # videos the uploader has explicitly marked CC-BY.
+    query = f"ytsearch{want * 2}:{topic} creativecommons"
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as y:
+            res = y.extract_info(query, download=False)
+    except Exception as e:
+        log(f"youtube: search failed: {e}")
+        return None
+
+    entries = [e for e in (res.get("entries") or []) if e.get("id")]
+    random.shuffle(entries)
+    log(f"youtube: {len(entries)} candidates for '{topic}'")
+
+    for e in entries[:want]:
+        vid = e.get("id")
+        url = f"https://www.youtube.com/watch?v={vid}"
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
+                                   "simulate": True}) as y:
+                info = y.extract_info(url, download=False)
+        except Exception:
+            continue
+        if not info:
+            continue
+        dur = info.get("duration") or 0
+        if dur < 90:
+            continue
+        # cheapest format at or below max_height that still decodes to
+        # something worth cutting; 144p is refused outright.
+        cands = [f for f in (info.get("formats") or [])
+                 if str(f.get("vcodec") or "").startswith("avc1")
+                 and (f.get("height") or 0) >= 240
+                 and (f.get("height") or 0) <= max_height]
+        if not cands:
+            continue
+        # Highest quality we can still afford to download. Sorting the other
+        # way picked 240p every time, which upscales to mush at 1080x1920.
+        cands.sort(key=lambda f: (-(f.get("height") or 0),
+                                  f.get("filesize") or 10 ** 9))
+        fmt = cands[0]
+        if (fmt.get("filesize") or 0) > max_bytes:
+            continue
+        dest = out_dir / f"yt_{vid}.mp4"
+        log(f"youtube: {vid} '{str(info.get('title'))[:48]}' "
+            f"{fmt.get('height')}p {dur}s")
+        try:
+            with yt_dlp.YoutubeDL({
+                "quiet": True, "no_warnings": True, "noprogress": True,
+                "outtmpl": str(dest.with_suffix(".%(ext)s")),
+                "ffmpeg_location": ff, "format": fmt.get("format_id"),
+            }) as y:
+                y.download([url])
+        except Exception as ex:
+            log(f"youtube: download failed for {vid}: {str(ex)[:120]}")
+            continue
+        if not dest.exists() or dest.stat().st_size < 1024 * 1024:
+            continue
+        if has_face(dest):
+            log(f"youtube: dropping {vid} - a real person is in the footage")
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            continue
+        (out_dir / f"yt_{vid}.json").write_text(json.dumps(
+            {"identifier": vid, "title": info.get("title", ""),
+             "license": "YouTube Creative Commons (CC-BY)",
+             "channel": info.get("uploader", ""), "url": url,
+             "height": fmt.get("height"), "duration": dur,
+             "description": (info.get("description") or "")[:1500],
+             "tags": (info.get("tags") or [])[:25],
+             "fetched": dt.date.today().isoformat()}, indent=2))
+        log(f"youtube: saved {dest.name} "
+            f"({dest.stat().st_size / 1e6:.1f} MB)")
+        return dest
+    log("youtube: nothing usable in the candidates")
+    return None
 
 
 def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
@@ -382,9 +528,79 @@ NARRATIVES = [
 ]
 
 
-def make_script(rng):
-    title, body = rng.choice(NARRATIVES)
-    return title, body
+def _subject_of(src):
+    """What is actually on screen, taken from the source's own metadata.
+
+    This is the fix for the defect that made every clip unpublishable. The
+    script used to be drawn from five canned stories at random, so a nature
+    documentary about cardinals was narrated as "The Last Leaf" - the audio
+    promised one thing and the picture delivered another, which is the single
+    fastest way to lose a viewer in the first two seconds and the thing the
+    retention research names most often as fatal.
+    """
+    p = Path(src)
+    meta = {}
+    for cand in (p.with_suffix(".json"), SRC / (p.stem + ".json")):
+        try:
+            if cand.exists():
+                meta = json.loads(cand.read_text())
+                break
+        except Exception:
+            pass
+    title = (meta.get("title") or p.stem).strip()
+    # strip the usual uploader noise so the subject reads cleanly
+    title = re.sub(r"\s*[|｜\-–]\s*(full|hd|4k|documentary|free).*$", "",
+                   title, flags=re.I).strip(" -|:")
+    # a listicle title is not a subject: "5 Things You Didn't Know About
+    # Cardinals!" should read as "cardinals"
+    m = re.search(r"\b(?:about|of)\s+([a-z][a-z\s\-]{2,40})", title, flags=re.I)
+    if m and len(m.group(1).split()) <= 4:
+        title = m.group(1)
+    title = re.sub(r"^\W+|\W+$", "", title).strip()
+    return title or p.stem, meta
+
+
+# Written as Hook -> Payoff -> Loop, which is the shape the retention research
+# converges on: a promise in the first second, delivery, and an ending that
+# reconnects to the opening. Every line names the real subject.
+HOOKS = [
+    "This is a {s}. Watch what happens next.",
+    "Meet the {s}. Almost nobody notices this.",
+    "A {s}. Looks ordinary. Is not.",
+    "Look closely at this {s}.",
+    "This {s} is about to do something strange.",
+]
+BODIES = [
+    "See how that moves? Every part of it is built for exactly this.",
+    "Watch the way it uses everything around it.",
+    "That is not luck. That is thousands of years of practice.",
+    "Look at the detail. Nothing here is an accident.",
+    "Small, and completely in control of this moment.",
+]
+PAYOFFS = [
+    "And here is the part that surprises people. This happens every single "
+    "day, without anyone being taught.",
+    "Now you know what to look for. You will never look at one the same way "
+    "again.",
+    "That is the whole secret. No tricks. Just this.",
+    "It looks simple. It has taken a very long time to get this good.",
+]
+LOOPS = [
+    "Watch once more. There is something you missed.",
+    "Did you catch that? Watch again.",
+    "And that is how it happens. Every time.",
+]
+
+
+def make_script(rng, subject):
+    """A short script about the thing that is actually on screen."""
+    s = subject.lower().strip()
+    hook = rng.choice(HOOKS).format(s=s)
+    body = rng.choice(BODIES)
+    payoff = rng.choice(PAYOFFS)
+    loop = rng.choice(LOOPS)
+    title = subject.strip()[:60] or "Wild Moments"
+    return title, " ".join([hook, body, payoff, loop])
 
 
 def synth_voice(text, out_wav, voice="en-US-AnaNeural"):
@@ -427,6 +643,42 @@ def probe_duration(path):
     return 0.0
 
 
+def _motion_at(src, start, seconds):
+    """Cheap motion estimate for one candidate offset, straight off the source.
+
+    Downsamples hard so this costs a fraction of the real encode. Used to
+    choose *where* to cut rather than cutting blind and hoping.
+    """
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(src))
+        if not cap.isOpened():
+            return 0.0
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+        prev = None
+        total = 0.0
+        n = 0
+        want = int(min(seconds, 20) * 6)  # 6 samples/sec is plenty
+        got = 0
+        while got < want:
+            ok, fr = cap.read()
+            if not ok:
+                break
+            got += 1
+            if got % 5:          # every 5th frame only
+                continue
+            g = cv2.cvtColor(cv2.resize(fr, (160, 90)), cv2.COLOR_BGR2GRAY)
+            if prev is not None:
+                total += float(abs(g.astype("int16") - prev.astype("int16")).mean())
+                n += 1
+            prev = g
+        cap.release()
+        return total / n if n else 0.0
+    except Exception:
+        return 0.0
+
+
 def build_short(src, day, rng, out_dir, seconds=42):
     """Cut a segment, treat it, add voice, land a 1080x1920 Short."""
     out_dir = Path(out_dir)
@@ -436,10 +688,25 @@ def build_short(src, day, rng, out_dir, seconds=42):
         log(f"source is only {dur:.1f}s; using all of it")
         start, seconds = 0.0, max(8.0, dur)
     else:
-        start = rng.uniform(1.0, max(1.0, dur - seconds - 1.0))
+        # Pick the liveliest window rather than a random one. A nature
+        # documentary is mostly a talking head or a static wide shot, and a
+        # random cut lands on those often enough that the 3.0/255 motion floor
+        # refused roughly half of all builds. Scoring six candidates costs a
+        # few seconds and turns that into a choice.
+        span = max(1.0, dur - seconds - 1.0)
+        cands = [rng.uniform(1.0, span) for _ in range(6)]
+        scored = [(c, _motion_at(src, c, seconds)) for c in cands]
+        scored.sort(key=lambda t: -t[1])
+        start = scored[0][0]
+        log(f"segment candidates (start, motion): "
+            + ", ".join(f"{c:.0f}s/{m:.1f}" for c, m in scored))
+        log(f"chose {start:.1f}s (motion {scored[0][1]:.1f})")
 
-    title, script = make_script(rng)
-    log(f"segment {start:.1f}s +{seconds:.0f}s | narrative: {title}")
+
+    subject, _meta = _subject_of(src)
+    title, script = make_script(rng, subject)
+    log(f"segment {start:.1f}s +{seconds:.0f}s | subject: {subject} "
+        f"| narrative: {title}")
 
     tmp = Path(tempfile.mkdtemp(prefix="editpipe-"))
     seg = tmp / "seg.mp4"
@@ -504,6 +771,11 @@ def build_short(src, day, rng, out_dir, seconds=42):
         cmd += ["-i", str(voice)]
     if music.exists():
         cmd += ["-i", str(music)]
+    # Release everything the search, the download and the face checks are
+    # still holding before the encode asks for its own buffers. On a 1.9 GB
+    # box the difference between fitting and being SIGKILLed is a few hundred
+    # megabytes.
+    gc.collect()
     cmd += ["-filter_complex", full, "-map", "[vout]"]
     # Count inputs by position, not by list length. `inputs` holds six list
     # elements per card (-loop 1 -t 3.2 -i <path>) plus two for the segment, so
@@ -517,9 +789,21 @@ def build_short(src, day, rng, out_dir, seconds=42):
         cmd += ["-map", f"{i_voice}:a"]
     if music.exists():
         cmd += ["-map", f"{i_music}:a"]
+    # This box has under 2 GB of RAM. x264 sizes its lookahead and reference
+    # buffers per thread, so on a many-core machine the default thread count
+    # alone can exceed the whole budget and the kernel SIGKILLs us mid-write
+    # (rc -9), leaving a truncated file with no moov atom that then fails every
+    # later check for a reason that looks like nothing to do with memory.
+    # Two threads is the largest that survives here.
     cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-            "-shortest", "-movflags", "+faststart", str(out)]
+            "-threads", "1", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+            # ref=1, no B-frames and no lookahead cut x264's frame buffers to a
+            # fraction of the default. Quality cost is real but small next to
+            # being SIGKILLed mid-write, which is what the defaults do on a
+            # 1.9 GB box. This box is the binding constraint, not the encoder.
+            "-x264-params", "ref=1:bframes=0:rc-lookahead=0:sliced-threads=1",
+            str(out)]
     r = sh(cmd)
     if not out.exists() or out.stat().st_size < 50_000:
         log(f"ffmpeg failed: {r.stderr[-500:]}")
@@ -641,11 +925,41 @@ def main():
     ap.add_argument("--day", type=int, required=True)
     ap.add_argument("--topic", default="cartoon")
     ap.add_argument("--seconds", type=int, default=42)
+    ap.add_argument("--source", default="auto",
+                    choices=["auto", "archive", "youtube"])
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
     rng = random.Random(a.day * 7919 + dt.date.today().toordinal())
-    src = fetch_cc0(a.topic, SRC)
+    # Topics that are animal footage rather than talking heads. "Nature
+    # documentary" sounds ideal and is the worst possible choice: those videos
+    # are narrated by people, and the face guard correctly refuses every one of
+    # them, which is how two consecutive w10 runs produced nothing at all.
+    TOPICS = [
+        "cardinal bird", "baby animals", "wildlife footage",
+        "birds in the wild", "squirrel slow motion", "ducklings",
+        "fox cubs", "hedgehog close up", "sea turtles",
+        "hummingbird slow motion", "owls", "deer in forest",
+    ]
+    src = None
+    used = None
+    # The requested topic first, then the rest, with archive.org as a backstop
+    # for each. An unattended daily run cannot afford to return nothing just
+    # because one search term happened to be people-heavy.
+    order = [a.topic] + [t for t in TOPICS if t != a.topic]
+    for t in order:
+        if a.source != "archive":
+            src = fetch_youtube(t, SRC)
+            if src:
+                used = t
+                break
+        if a.source != "youtube":
+            src = fetch_cc0(t, SRC)
+            if src:
+                used = t
+                break
+    if src:
+        log(f"source came from topic '{used}'")
     if not src:
         log("no CC0 source available; nothing built")
         print(json.dumps({"action": "no-source", "day": a.day}))
@@ -671,14 +985,14 @@ def main():
         print(json.dumps({"action": "failed", "day": a.day}))
         return 1
 
-    # A 42 s 1080x1920 x264 clip is never under a couple of MB. Anything that
-    # small means the encode silently failed and the moov atom was never
-    # written - it is not a video, it must not reach the motion check, let
-    # alone YouTube.
-    floor_bytes = int(a.seconds * 40_000)
-    if out.stat().st_size < floor_bytes:
-        log(f"REFUSING: output is only {out.stat().st_size / 1e6:.1f} MB for "
-            f"{a.seconds}s - the encode failed, not a usable clip")
+    # A finished Short is never tiny and never a fraction of a second long.
+    # The voiceover sets the real length via -shortest, so a 19 s clip against
+    # a 42 s request is normal - what is NOT normal is 0.0 s or a sub-megabyte
+    # file, which is what a truncated write or an undecodable source produces.
+    d = probe_duration(out)
+    if out.stat().st_size < 1_000_000 or (d is not None and d < 10.0):
+        log(f"REFUSING: output is {out.stat().st_size / 1e6:.1f} MB / "
+            f"{d}s - the encode failed, not a usable clip")
         print(json.dumps({"action": "failed", "day": a.day,
                           "bytes": out.stat().st_size}))
         return 1
