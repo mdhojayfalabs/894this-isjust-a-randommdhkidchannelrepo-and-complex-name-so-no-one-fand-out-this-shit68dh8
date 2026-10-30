@@ -62,7 +62,7 @@ jobs:
           # failed closed and refused every source. Installing both leaves the
           # headless cv2 in place, so remove it first and force the full build.
           pip uninstall -y opencv-python-headless opencv-python
-          pip install --no-deps --force-reinstall opencv-python
+          pip install --no-deps --force-reinstall "opencv-python<5"
           python -c "import cv2; assert hasattr(cv2,'CascadeClassifier'); print('cv2', cv2.__version__, 'cascade OK')"
       - name: build
         id: build
