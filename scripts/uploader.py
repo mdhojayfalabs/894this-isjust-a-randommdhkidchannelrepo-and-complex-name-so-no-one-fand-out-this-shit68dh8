@@ -60,6 +60,10 @@ def upload_video(path, title, description, tags, privacy="public",
     media = MediaFileUpload(path, mimetype="video/mp4", chunksize=-1)
     resp = yt.videos().insert(
         part="snippet,status", body=body, media_body=media).execute()
+    # Without this the caller gets None and dies on res["id"] *after* the
+    # upload has already gone through, which loses the video id, the upload
+    # log entry and the Telegram notification in one crash.
+    return resp
 
 def delete_video(video_id):
     """Permanently delete one video by id. Returns the API response.
