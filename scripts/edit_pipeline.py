@@ -86,8 +86,6 @@ def ff():
 COLLECTIONS = [
     "classic_cartoons",
     "animationandcartoons",
-    "AnimatedFilms",
-    "computeranimation",
 ]
 # archive.org's `movies` and `animationandcartoons` collections are mostly
 # *copyrighted* commercial film and TV - Cartoon Network, Disney, the lot.
@@ -182,6 +180,27 @@ def is_animation_source(path, samples=20):
             or "betty" in p or "boop" in p or "snow_white" in p)
 
 
+def _is_animation(src):
+    """True when this source is drawn animation, from its own provenance.
+
+    The collection the clip came out of is the only signal that survives
+    archive.org's 512 kb encodes: pixel statistics were tried and measured
+    useless, because those encodes are posterised so hard that home movies and
+    1930s cartoons both collapse to under a hundred distinct colours.
+    """
+    p = Path(src)
+    for cand in (p.with_suffix(".json"), SRC / (p.stem + ".json")):
+        try:
+            if cand.exists():
+                m = json.loads(cand.read_text())
+                if m.get("collection"):
+                    return "cartoon" in m["collection"].lower() or \
+                           "animation" in m["collection"].lower()
+        except Exception:
+            pass
+    return False
+
+
 def has_face(path, samples=90, need=3, require_photo=True):
     """True if a human face appears in this clip.
 
@@ -242,7 +261,7 @@ def has_face(path, samples=90, need=3, require_photo=True):
                     if first_at is None:
                         first_at = idx / fps
                     if hits >= need:
-                        if require_photo and is_animation_source(path):
+                        if require_photo and _is_animation(path):
                             log(f"face guard: {hits} faces, but this is an "
                                 f"animation source - cartoon characters, "
                                 f"not a real person")
@@ -404,8 +423,9 @@ def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
             f"({c.stat().st_size / 1e6:.1f} MB)")
         return c
 
+    asked = random.choice(COLLECTIONS)
     q = urllib.parse.urlencode({
-        "q": f"collection:({random.choice(COLLECTIONS)}) AND mediatype:movies "
+        "q": f"collection:({asked}) AND mediatype:movies "
              f"{LICENCE_FILTER} AND {topic}",
         # archive.org used to expand a repeated fl[] array; it now takes the
         # fields parameter as one comma-separated string and silently returns
@@ -478,7 +498,8 @@ def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
             (out_dir / f"{ident}.json").write_text(json.dumps(
                 {"identifier": ident, "title": doc.get("title", ""),
                  "license": doc.get("licenseurl", "public domain / CC"),
-                 "file": name, "url": dl, "fetched": dt.date.today().isoformat()},
+                 "collection": asked, "file": name, "url": dl,
+                 "fetched": dt.date.today().isoformat()},
                 indent=2))
             return dest
         log("download produced nothing usable")
