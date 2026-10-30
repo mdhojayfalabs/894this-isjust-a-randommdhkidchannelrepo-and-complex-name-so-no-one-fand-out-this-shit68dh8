@@ -449,9 +449,11 @@ def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
         log("no results; retrying without the topic term")
         try:
             with urllib.request.urlopen(
-                "https://archive.org/advancedsearch.php?q=mediatype%3A"
-                "movies+AND+licenseurl%3A%2Apublicdomain%2A&fl=identifier"
-                "%2Ctitle%2Clicenseurl&rows=25&output=json", timeout=45) as r:
+                "https://archive.org/advancedsearch.php?q=collection%3A"
+                + urllib.parse.quote(asked)
+                + "+AND+mediatype%3Amovies+AND+licenseurl%3A%2A"
+                  "publicdomain%2A&fl=identifier%2Ctitle%2Clicenseurl"
+                  "&rows=25&output=json", timeout=45) as r:
                 docs = json.load(r).get("response", {}).get("docs", [])
         except Exception as e:
             log(f"fallback search failed: {e}")

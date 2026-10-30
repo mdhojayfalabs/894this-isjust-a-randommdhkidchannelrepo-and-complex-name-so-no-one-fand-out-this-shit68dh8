@@ -55,7 +55,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: deps
-        run: pip install -r requirements.txt edge-tts imageio-ffmpeg soundfile yt-dlp
+        run: pip install -r requirements.txt edge-tts imageio-ffmpeg soundfile yt-dlp opencv-python
       - name: build
         id: build
         env:
