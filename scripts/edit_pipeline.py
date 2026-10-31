@@ -702,6 +702,44 @@ def _motion_at(src, start, seconds):
         return 0.0
 
 
+def _looks_mono(path, samples=12):
+    """True when the footage carries almost no colour of its own.
+
+    Classic-cartoon collections are full of 1930s black-and-white prints.
+    Grading those as if they were colour is what made the published clip look
+    like a dark scratchy film reel instead of a kids' video, so the treatment
+    has to know which it is looking at.
+    """
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            return False
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        step = max(1, total // samples) if total > samples else 1
+        sats = []
+        idx = 0
+        while len(sats) < samples:
+            ok, fr = cap.read()
+            if not ok:
+                break
+            if idx % step == 0:
+                hsv = cv2.cvtColor(fr, cv2.COLOR_BGR2HSV)
+                sats.append(float(hsv[:, :, 1].mean()))
+            idx += 1
+        cap.release()
+        if not sats:
+            return False
+        med = sorted(sats)[len(sats) // 2]
+        mono = med < 28.0
+        log(f"mono test: median saturation {med:.1f}/255 -> "
+            f"{'monochrome' if mono else 'colour'}")
+        return mono
+    except Exception as e:
+        log(f"mono test failed ({e}); assuming colour")
+        return False
+
+
 def build_short(src, day, rng, out_dir, seconds=42):
     """Cut a segment, treat it, add voice, land a 1080x1920 Short."""
     out_dir = Path(out_dir)
@@ -745,14 +783,32 @@ def build_short(src, day, rng, out_dir, seconds=42):
     # a visual treatment that is recognisably ours. The colour grade below is
     # deliberately strong (it changes the palette, it is not a filter on top of
     # an unchanged picture), and the text cards and vignette are ours.
-    grade = rng.choice([
-        "eq=contrast=1.22:brightness=0.04:saturation=1.45,"
-        "colorbalance=rs=.08:bs=-.06:gm=.05",
-        "eq=contrast=1.35:brightness=-.03:saturation=1.6,"
-        "colorbalance=rs=-.07:bs=.10",
-        "eq=contrast=1.15:brightness=.06:saturation=1.3,"
-        "colorbalance=rs=.10:gm=.06:bm=-.05",
-    ])
+    # A 1930s Betty Boop print is black and white, and no grade can make it
+    # look like the bright modern benchmark: pushing saturation on monochrome
+    # footage does nothing, and a colour-balance cast on neutral grey just
+    # tints the mud. Measured on the published clip - brightness 98.6/255 and
+    # saturation 41.9/255 against the benchmark's 164.6 and 57.6. So the
+    # treatment branches on what the footage actually is.
+    if _looks_mono(seg):
+        # Lift it out of the murk and give it a warm tint instead of grey.
+        # Brightness +0.12 and contrast 1.15 move 98.6 towards the mid-140s;
+        # the balance shift hands back some colour without pretending it was
+        # shot in colour.
+        grade = ("eq=contrast=1.15:brightness=0.12:saturation=1.0,"
+                 "colorbalance=rs=.10:rm=.06:bs=-.08")
+        vign = "vignette=PI/5.2:angle=0.35"
+    else:
+        # The source carries its own colour - the raw Betty Boop print
+        # measures a median saturation of 110/255. The old grade pushed
+        # contrast to 1.35 with brightness *down* and a hard PI/4.6 vignette,
+        # which is what dragged the published clip to 98.6/255 brightness
+        # against the benchmark's 164.6. Lift instead of crush.
+        grade = rng.choice([
+            "eq=contrast=1.05:brightness=0.10:saturation=1.02",
+            "eq=contrast=1.06:brightness=0.09:saturation=1.05",
+            "eq=contrast=1.04:brightness=0.11:saturation=1.00",
+        ])
+        vign = "vignette=PI/5.4:angle=0.22"
     text = tmp / "cards"
     text.mkdir(exist_ok=True)
     cards = []
@@ -761,7 +817,7 @@ def build_short(src, day, rng, out_dir, seconds=42):
         _text_card(p, line, rng)
         cards.append(p)
 
-    vf = [grade, "vignette=PI/4.6"]
+    vf = [grade, vign]
     # intercut our own text cards - the narrative, not the source's
     inputs = ["-i", str(seg)]
     for c in cards:
