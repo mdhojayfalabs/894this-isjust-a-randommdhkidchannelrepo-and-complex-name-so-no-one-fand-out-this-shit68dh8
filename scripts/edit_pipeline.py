@@ -87,6 +87,20 @@ COLLECTIONS = [
     "classic_cartoons",
     "animationandcartoons",
 ]
+# Colour public-domain animation, tried before any collection search. The
+# classic_cartoons collection is overwhelmingly 1930s black-and-white, and a
+# kids' channel lives on colour - measured against the user's benchmark, a
+# Betty Boop print is 41.9/255 saturation where the benchmark is 57.6. These
+# are Fleischer Technicolor features that lapsed into the public domain;
+# Mr. Bug Goes to Town measures 55.2/255, essentially the benchmark.
+COLOUR_FEATURES = [
+    ("mr.-bug-goes-to-town-1941", "Mr. Bug Goes to Town (1941).mp4",
+     "Mr Bug Goes to Town"),
+    ("gullivers-travels-1939_202511", "Gulliver's Travels (1939).mp4",
+     "Gulliver's Travels"),
+    ("Gullivers_Travels-1939", "Gulliver's Travels (1939).mp4",
+     "Gulliver's Travels"),
+]
 # archive.org's `movies` and `animationandcartoons` collections are mostly
 # *copyrighted* commercial film and TV - Cartoon Network, Disney, the lot.
 # They are not CC0 no matter what the item page claims. Every query below is
@@ -397,7 +411,7 @@ def fetch_youtube(topic, out_dir, max_bytes=200 * 1024 * 1024,
     return None
 
 
-def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
+def fetch_cc0(topic, out_dir, max_bytes=700 * 1024 * 1024):
     """Search archive.org for a free clip and download it.
 
     archive.org's advancedsearch returns JSON with no key required, which is why
@@ -422,6 +436,43 @@ def fetch_cc0(topic, out_dir, max_bytes=60 * 1024 * 1024):
         log(f"reusing cached source {c.name} "
             f"({c.stat().st_size / 1e6:.1f} MB)")
         return c
+
+    # Colour first. The feature files are large, so this is the one place the
+    # byte cap is raised.
+    for ident, name, nice in COLOUR_FEATURES:
+        dest = out_dir / f"{ident}.mp4"
+        if dest.exists() and dest.stat().st_size > 1024 * 1024:
+            if has_face(dest):
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                continue
+            log(f"reusing cached colour source {dest.name}")
+            return dest
+        dl = (f"https://archive.org/download/{ident}/"
+              f"{urllib.parse.quote(name)}")
+        log(f"downloading colour feature {ident} "
+            f"({name}, {max_bytes / 1e6:.0f} MB cap)")
+        sh(["curl", "-sL", "--max-time", "900", "-o", str(dest), dl])
+        if dest.exists() and dest.stat().st_size > 1024 * 1024:
+            if has_face(dest):
+                log(f"dropping {ident}: a real person is in the footage")
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                continue
+            (out_dir / f"{ident}.json").write_text(json.dumps(
+                {"identifier": ident, "title": nice,
+                 "license": "public domain",
+                 "collection": "classic_cartoons", "file": name, "url": dl,
+                 "colour": True,
+                 "fetched": dt.date.today().isoformat()}, indent=2))
+            log(f"saved colour feature {dest.name} "
+                f"({dest.stat().st_size / 1e6:.1f} MB)")
+            return dest
+        log("colour download produced nothing usable")
 
     asked = random.choice(COLLECTIONS)
     q = urllib.parse.urlencode({
