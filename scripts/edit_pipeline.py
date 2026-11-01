@@ -411,6 +411,123 @@ def fetch_youtube(topic, out_dir, max_bytes=200 * 1024 * 1024,
     return None
 
 
+def _pixabay_key():
+    """The Pixabay API key, from the environment or a file on disk.
+
+    Never hard-coded and never printed. Saved to disk the moment it arrives.
+    """
+    k = os.environ.get("PIXABAY_KEY", "").strip()
+    if k:
+        return k
+    for p in (Path("pixabay_key.txt"), Path(".private/pixabay_key.txt"),
+              SRC / "pixabay_key.txt"):
+        try:
+            if p.exists():
+                t = p.read_text().strip()
+                if t:
+                    return t
+        except OSError:
+            pass
+    return ""
+
+
+# Princess themes that are ours, not Disney's. YouTube actively flags and
+# removes content built on copyrighted characters, so nothing here may be a
+# named Disney princess - the research is explicit that this gets channels
+# pulled from YPP. These are generic, licensable themes instead.
+PIXABAY_TOPICS = [
+    "princess castle", "little girl princess dress", "fairy tale castle",
+    "princess birthday party", "girl crown dress up", "magical forest fairy",
+    "ballerina dancing", "tea party dolls", "unicorn rainbow",
+    "princess carriage horse", "sparkle magic wand", "girl dancing dress",
+]
+
+
+def fetch_pixabay(topic, out_dir, want=25, max_bytes=200 * 1024 * 1024):
+    """Search Pixabay for free stock video and download one.
+
+    Pixabay's own licence permits commercial use with no attribution, which is
+    why this is the preferred source: the rights question is settled by the
+    licence rather than by arguing fair use, and the footage is modern,
+    colourful stock rather than 1930s film.
+    """
+    key = _pixabay_key()
+    if not key:
+        log("pixabay: no API key (set PIXABAY_KEY or pixabay_key.txt)")
+        return None
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for t in [topic] + [x for x in PIXABAY_TOPICS if x != topic]:
+        q = urllib.parse.urlencode({
+            "key": key, "q": t, "video_type": "all",
+            "min_width": 1280, "safesearch": "true", "per_page": 40,
+        })
+        try:
+            with urllib.request.urlopen(
+                    "https://pixabay.com/api/videos/?" + q,
+                    timeout=45) as r:
+                data = json.load(r)
+        except Exception as e:
+            log(f"pixabay: search failed for '{t}': {str(e)[:120]}")
+            continue
+        hits = data.get("hits") or []
+        if not hits:
+            log(f"pixabay: no hits for '{t}'")
+            continue
+        random.shuffle(hits)
+        log(f"pixabay: {len(hits)} hits for '{t}'")
+        for h in hits[:want]:
+            vid = h.get("id")
+            dur = h.get("duration") or 0
+            if dur < 45:
+                continue
+            vids = h.get("videos") or {}
+            pick = None
+            for size in ("large", "medium", "small"):
+                v = vids.get(size)
+                if v and v.get("url"):
+                    pick = v
+                    break
+            if not pick:
+                continue
+            dest = out_dir / f"px_{vid}.mp4"
+            log(f"pixabay: {vid} '{str(h.get('tags'))[:44]}' {dur}s "
+                f"{pick.get('width')}x{pick.get('height')}")
+            sh(["curl", "-sL", "--max-time", "600", "-o", str(dest),
+                pick["url"]])
+            if not dest.exists() or dest.stat().st_size < 1024 * 1024:
+                continue
+            if dest.stat().st_size > max_bytes:
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                continue
+            if has_face(dest):
+                log(f"pixabay: dropping {vid} - a real person is in the "
+                    f"footage")
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                continue
+            (out_dir / f"px_{vid}.json").write_text(json.dumps(
+                {"identifier": f"px_{vid}", "title": t,
+                 "license": "Pixabay Content Licence (commercial use, "
+                            "no attribution)",
+                 "collection": "pixabay", "url": h.get("pageURL", ""),
+                 "tags": h.get("tags", ""), "duration": dur,
+                 "width": pick.get("width"), "height": pick.get("height"),
+                 "colour": True,
+                 "fetched": dt.date.today().isoformat()}, indent=2))
+            log(f"pixabay: saved {dest.name} "
+                f"({dest.stat().st_size / 1e6:.1f} MB)")
+            return dest
+        log(f"pixabay: nothing usable for '{t}'")
+    return None
+
+
 def fetch_cc0(topic, out_dir, max_bytes=700 * 1024 * 1024):
     """Search archive.org for a free clip and download it.
 
@@ -435,6 +552,14 @@ def fetch_cc0(topic, out_dir, max_bytes=700 * 1024 * 1024):
             continue
         log(f"reusing cached source {c.name} "
             f"({c.stat().st_size / 1e6:.1f} MB)")
+        # A cached source is not automatically the right one. The cache is
+        # where the old black-and-white Betty Boop print came back from, and it
+        # short-circuited the colour route entirely. A kids' channel needs
+        # colour, so a monochrome cache entry loses to the colour features.
+        if _looks_mono(c):
+            log(f"cached source {c.name} is monochrome - falling through to "
+                f"the colour features")
+            continue
         return c
 
     # Colour first. The feature files are large, so this is the one place the
@@ -1056,7 +1181,7 @@ def main():
     ap.add_argument("--topic", default="cartoon")
     ap.add_argument("--seconds", type=int, default=42)
     ap.add_argument("--source", default="auto",
-                    choices=["auto", "archive", "youtube"])
+                    choices=["auto", "archive", "youtube", "pixabay"])
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -1078,7 +1203,15 @@ def main():
     # because one search term happened to be people-heavy.
     order = [a.topic] + [t for t in TOPICS if t != a.topic]
     for t in order:
-        if a.source != "archive":
+        # Pixabay first: the licence settles the rights question outright, the
+        # footage is modern colourful stock rather than 1930s film, and it is
+        # the closest thing available to the user's benchmark without a GPU.
+        if a.source in ("auto", "pixabay"):
+            src = fetch_pixabay(t, SRC)
+            if src:
+                used = t
+                break
+        if a.source not in ("archive",):
             src = fetch_youtube(t, SRC)
             if src:
                 used = t
